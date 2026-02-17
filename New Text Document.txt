@@ -1,0 +1,31 @@
+[!] (plugin typescript) RollupError: @rollup/plugin-typescript TS6133: 'findCellTd' is declared but its value is never read.
+src/Tableview.tsx (331:11)
+
+331     const findCellTd = useCallback((el: Element | null): HTMLElement | null => {
+              ~~~~~~~~~~
+
+    at error (C:\Users\yokesv\Mendix\CVP-Dev_Phase1_02102026\MyWidget\tableView\node_modules\rollup\dist\shared\rollup.js:353:30)
+    at Object.error (C:\Users\yokesv\Mendix\CVP-Dev_Phase1_02102026\MyWidget\tableView\node_modules\rollup\dist\shared\rollup.js:1721:20)
+    at emitDiagnostic (file:///C:/Users/yokesv/Mendix/CVP-Dev_Phase1_02102026/MyWidget/tableView/node_modules/@rollup/plugin-typescript/dist/es/index.js:558:17)
+    at reportDiagnostics (file:///C:/Users/yokesv/Mendix/CVP-Dev_Phase1_02102026/MyWidget/tableView/node_modules/@rollup/plugin-typescript/dist/es/index.js:566:9)
+    at Array.forEach (<anonymous>)
+    at emitFilesAndReportErrors (C:\Users\yokesv\Mendix\CVP-Dev_Phase1_02102026\MyWidget\tableView\node_modules\typescript\lib\typescript.js:133727:15)
+    at Object.result.afterProgramCreate (C:\Users\yokesv\Mendix\CVP-Dev_Phase1_02102026\MyWidget\tableView\node_modules\typescript\lib\typescript.js:133912:5)
+    at Object.afterProgramCreate (file:///C:/Users/yokesv/Mendix/CVP-Dev_Phase1_02102026/MyWidget/tableView/node_modules/@rollup/plugin-typescript/dist/es/index.js:733:29)
+    at synchronizeProgram (C:\Users\yokesv\Mendix\CVP-Dev_Phase1_02102026\MyWidget\tableView\node_modules\typescript\lib\typescript.js:134235:12)
+    at Object.createWatchProgram (C:\Users\yokesv\Mendix\CVP-Dev_Phase1_02102026\MyWidget\tableView\node_modules\typescript\lib\typescript.js:134139:3)
+
+
+PS C:\Users\yokesv\Mendix\CVP-Dev_Phase1_02102026\MyWidget\tableView> npx tsc --noEmit
+src/Tableview.tsx:331:11 - error TS6133: 'findCellTd' is declared but its value is never read.
+
+331     const findCellTd = useCallback((el: Element | null): HTMLElement | null => {
+              ~~~~~~~~~~
+
+src/Tableview.tsx:370:83 - error TS6133: 'event' is declared but its value is never read.
+
+370     const handleInputMouseDown = useCallback((rowIndex: number, colIndex: number, event: React.MouseEvent<HTMLInputElement>) => {
+                                                                                      ~~~~~
+
+
+Found 2 errors in the same file, starting at: src/Tableview.tsx:331
