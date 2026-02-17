@@ -1,0 +1,1619 @@
+tsx
+
+import { ReactElement, createElement, useState, useCallback, useEffect, useRef } from "react";
+
+import classNames from "classnames";
+import { TableviewContainerProps } from "../typings/TableviewProps";
+import Big from "big.js";
+import "./ui/Tableview.css";
+
+interface CellObject {
+    id: string;
+    sequenceNumber: string;
+    isBlocked: boolean;
+    isMerged: boolean;
+    mergeId: string;
+    isBlank: boolean;
+
+    rowIndex: number;
+    columnIndex: number;
+    checked: boolean;
+    isSelected: boolean;
+    rowSpan: number;
+    colSpan: number;
+    isHidden: boolean;
+}
+
+interface TableRow {
+    id: string;
+    rowIndex: number;
+    cells: CellObject[];
+}
+
+interface TableData {
+    rows: number;
+    columns: number;
+    tableRows: TableRow[];
+    metadata?: {
+        createdAt?: string;
+        updatedAt?: string;
+    };
+}
+
+const Tableview = (props: TableviewContainerProps): ReactElement => {
+    const getInitialRows = () => {
+        if (props.rowCountAttribute?.status === "available" && props.rowCountAttribute.value) {
+            return Number(props.rowCountAttribute.value);
+        }
+        return 3;
+    };
+
+    const getInitialColumns = () => {
+        if (props.columnCountAttribute?.status === "available" && props.columnCountAttribute.value) {
+            return Number(props.columnCountAttribute.value);
+        }
+        return 3;
+    };
+
+    const [rowCount, setRowCount] = useState<number>(getInitialRows());
+    const [columnCount, setColumnCount] = useState<number>(getInitialColumns());
+    const [tableRows, setTableRows] = useState<TableRow[]>([]);
+    const [selectedCells, setSelectedCells] = useState<Set<string>>(new Set());
+    const [isSelectionMode, setIsSelectionMode] = useState<boolean>(false);
+
+    // Drag selection
+    const [isDragging, setIsDragging] = useState<boolean>(false);
+    const [dragStartCell, setDragStartCell] = useState<{ row: number; col: number } | null>(null);
+    const dragSelectionRef = useRef<Set<string>>(new Set());
+    const preSelectionRef = useRef<Set<string>>(new Set());
+
+    const [isInitialLoad, setIsInitialLoad] = useState<boolean>(true);
+    const [isSaving, setIsSaving] = useState<boolean>(false);
+    const [dataLoaded, setDataLoaded] = useState<boolean>(false);
+    const lastSavedDataRef = useRef<string>("");
+    const isUserInputRef = useRef<boolean>(false);
+    const ignoreAttributeUpdateRef = useRef<boolean>(false);
+
+    // ── Statistics ────────────────────────────────────────────────────────────
+    const updateCellStatistics = useCallback(
+        (rows: TableRow[]) => {
+            const totalCells = rows.reduce((sum, row) => sum + row.cells.length, 0);
+            const blockedCells = rows.reduce((sum, row) => sum + row.cells.filter(c => c.isBlocked).length, 0);
+            const mergedCells = rows.reduce((sum, row) => sum + row.cells.filter(c => c.isMerged && !c.isHidden).length, 0);
+            const blankCells = rows.reduce((sum, row) => sum + row.cells.filter(c => c.isBlank && !c.isHidden).length, 0);
+
+            if (props.totalCellsAttribute?.status === "available") props.totalCellsAttribute.setValue(new Big(totalCells));
+            if (props.blockedCellsAttribute?.status === "available") props.blockedCellsAttribute.setValue(new Big(blockedCells));
+            if (props.mergedCellsAttribute?.status === "available") props.mergedCellsAttribute.setValue(new Big(mergedCells));
+            if ((props as any).blankCellsAttribute?.status === "available") (props as any).blankCellsAttribute.setValue(new Big(blankCells));
+        },
+        [props.totalCellsAttribute, props.blockedCellsAttribute, props.mergedCellsAttribute]
+    );
+
+    // ── Load data ─────────────────────────────────────────────────────────────
+    useEffect(() => {
+        if (isSaving) return;
+        const incomingData = props.useAttributeData?.value || "";
+        if (incomingData === lastSavedDataRef.current && lastSavedDataRef.current !== "") return;
+
+        if (incomingData && incomingData !== "") {
+            try {
+                const tableData: TableData = JSON.parse(incomingData);
+                if (tableData.tableRows && tableData.rows > 0 && tableData.columns > 0) {
+                    const validatedRows = tableData.tableRows.map((row, idx) => {
+                        const rowIndex = idx + 1;
+                        return {
+                            ...row,
+                            id: `row_${rowIndex}`,
+                            rowIndex,
+                            cells: row.cells.map((cell, cIdx) => {
+                                const colIndex = cIdx + 1;
+                                const seqNum = cell.sequenceNumber || "-";
+                                const isBlocked = seqNum.trim() !== "" && seqNum.trim() !== "-";
+                                const validatedCell: CellObject = {
+                                    id: `cell_${rowIndex}_${colIndex}`,
+                                    sequenceNumber: seqNum,
+                                    isBlocked: cell.isBlocked !== undefined ? cell.isBlocked : isBlocked,
+                                    isMerged: cell.isMerged || false,
+                                    mergeId: cell.mergeId || "",
+                                    isBlank: cell.isBlank || false,
+                                    rowIndex,
+                                    columnIndex: colIndex,
+                                    checked: cell.checked || false,
+                                    isSelected: false,
+                                    rowSpan: cell.rowSpan || 1,
+                                    colSpan: cell.colSpan || 1,
+                                    isHidden: cell.isHidden || false
+                                };
+                                return validatedCell;
+                            })
+                        };
+                    });
+
+                    setRowCount(tableData.rows);
+                    setColumnCount(tableData.columns);
+                    ignoreAttributeUpdateRef.current = true;
+                    if (props.rowCountAttribute?.status === "available") props.rowCountAttribute.setValue(new Big(tableData.rows));
+                    if (props.columnCountAttribute?.status === "available") props.columnCountAttribute.setValue(new Big(tableData.columns));
+
+                    setTableRows(validatedRows);
+                    setSelectedCells(new Set());
+                    setIsSelectionMode(false);
+                    setDataLoaded(true);
+                    updateCellStatistics(validatedRows);
+                    lastSavedDataRef.current = incomingData;
+                    if (isInitialLoad) setTimeout(() => setIsInitialLoad(false), 500);
+                }
+            } catch (error) {
+                console.error("Error loading table from attribute:", error);
+                if (isInitialLoad) setTimeout(() => setIsInitialLoad(false), 500);
+            }
+        } else {
+            if (isInitialLoad) setTimeout(() => setIsInitialLoad(false), 500);
+        }
+    }, [props.useAttributeData?.value, updateCellStatistics, isSaving, isInitialLoad, props.rowCountAttribute, props.columnCountAttribute]);
+
+    useEffect(() => {
+        if (ignoreAttributeUpdateRef.current) { ignoreAttributeUpdateRef.current = false; return; }
+        if (props.rowCountAttribute?.status === "available" && props.rowCountAttribute.value != null) {
+            const v = Number(props.rowCountAttribute.value);
+            if (!isNaN(v) && v > 0 && v <= 100 && v !== rowCount && !isUserInputRef.current) setRowCount(v);
+        }
+    }, [props.rowCountAttribute?.value, rowCount]);
+
+    useEffect(() => {
+        if (ignoreAttributeUpdateRef.current) { ignoreAttributeUpdateRef.current = false; return; }
+        if (props.columnCountAttribute?.status === "available" && props.columnCountAttribute.value != null) {
+            const v = Number(props.columnCountAttribute.value);
+            if (!isNaN(v) && v > 0 && v <= 100 && v !== columnCount && !isUserInputRef.current) setColumnCount(v);
+        }
+    }, [props.columnCountAttribute?.value, columnCount]);
+
+    const createMergeId = (r1: number, c1: number, r2: number, c2: number) => `${r1}${c1}${r2}${c2}`;
+
+    // ── Create table ──────────────────────────────────────────────────────────
+    const createNewTable = useCallback((rows: number, cols: number) => {
+        if (rows <= 0 || cols <= 0) return;
+        const newTableRows: TableRow[] = Array.from({ length: rows }, (_, idx) => {
+            const rowIndex = idx + 1;
+            return {
+                id: `row_${rowIndex}`,
+                rowIndex,
+                cells: Array.from({ length: cols }, (_, cIdx) => {
+                    const colIndex = cIdx + 1;
+                    return {
+                        id: `cell_${rowIndex}_${colIndex}`,
+                        sequenceNumber: "-",
+                        isBlocked: false,
+                        isMerged: false,
+                        mergeId: "",
+                        isBlank: false,
+                        rowIndex,
+                        columnIndex: colIndex,
+                        checked: false,
+                        isSelected: false,
+                        rowSpan: 1,
+                        colSpan: 1,
+                        isHidden: false
+                    };
+                })
+            };
+        });
+        setTableRows(newTableRows);
+        setSelectedCells(new Set());
+        setIsSelectionMode(false);
+        setDataLoaded(true);
+        saveToBackend(newTableRows, rows, cols);
+    }, []);
+
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            if (!dataLoaded && tableRows.length === 0) createNewTable(rowCount, columnCount);
+        }, 100);
+        return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [dataLoaded]);
+
+    // ── Save ──────────────────────────────────────────────────────────────────
+    const saveToBackend = useCallback(
+        (rows: TableRow[], rowCnt: number, colCnt: number) => {
+            setIsSaving(true);
+            const tableData: TableData = { rows: rowCnt, columns: colCnt, tableRows: rows, metadata: { updatedAt: new Date().toISOString() } };
+            const jsonData = JSON.stringify(tableData);
+            lastSavedDataRef.current = jsonData;
+            if (props.useAttributeData?.status === "available") props.useAttributeData.setValue(jsonData);
+            if (props.tableDataAttribute?.status === "available") props.tableDataAttribute.setValue(jsonData);
+            ignoreAttributeUpdateRef.current = true;
+            if (props.rowCountAttribute?.status === "available") props.rowCountAttribute.setValue(new Big(rowCnt));
+            if (props.columnCountAttribute?.status === "available") props.columnCountAttribute.setValue(new Big(colCnt));
+            updateCellStatistics(rows);
+            if (props.onTableChange?.canExecute) props.onTableChange.execute();
+            setTimeout(() => setIsSaving(false), 100);
+        },
+        [props.useAttributeData, props.tableDataAttribute, props.rowCountAttribute, props.columnCountAttribute, props.onTableChange, updateCellStatistics]
+    );
+
+    useEffect(() => {
+        if (props.autoSave && tableRows.length > 0 && !isSaving) saveToBackend(tableRows, rowCount, columnCount);
+    }, [tableRows, props.autoSave, saveToBackend, isSaving, rowCount, columnCount]);
+
+    useEffect(() => {
+        if (tableRows.length > 0) updateCellStatistics(tableRows);
+    }, [tableRows, updateCellStatistics]);
+
+    // ── Dimensions ────────────────────────────────────────────────────────────
+    const applyDimensions = useCallback(() => {
+        if (isNaN(rowCount) || isNaN(columnCount)) { alert("Please enter valid numbers"); return; }
+        if (rowCount <= 0 || columnCount <= 0) { alert("Rows and columns must be positive numbers"); return; }
+        if (rowCount > 100 || columnCount > 100) { alert("Maximum 100 rows and 100 columns"); return; }
+        ignoreAttributeUpdateRef.current = true;
+        if (props.rowCountAttribute?.status === "available") props.rowCountAttribute.setValue(new Big(rowCount));
+        if (props.columnCountAttribute?.status === "available") props.columnCountAttribute.setValue(new Big(columnCount));
+        createNewTable(rowCount, columnCount);
+    }, [rowCount, columnCount, createNewTable, props.rowCountAttribute, props.columnCountAttribute]);
+
+    // ── Add row ───────────────────────────────────────────────────────────────
+    const addRow = useCallback(() => {
+        const newRowCount = rowCount + 1;
+        if (newRowCount > 100) { alert("Maximum 100 rows"); return; }
+        isUserInputRef.current = true;
+        setRowCount(newRowCount);
+        ignoreAttributeUpdateRef.current = true;
+        if (props.rowCountAttribute?.status === "available") props.rowCountAttribute.setValue(new Big(newRowCount));
+        setTableRows(prevRows => {
+            const newRows = [...prevRows];
+            const rowIndex = newRowCount;
+            newRows.push({
+                id: `row_${rowIndex}`,
+                rowIndex,
+                cells: Array.from({ length: columnCount }, (_, cIdx) => {
+                    const colIndex = cIdx + 1;
+                    return { id: `cell_${rowIndex}_${colIndex}`, sequenceNumber: "-", isBlocked: false, isMerged: false, mergeId: "", isBlank: false, rowIndex, columnIndex: colIndex, checked: false, isSelected: false, rowSpan: 1, colSpan: 1, isHidden: false };
+                })
+            });
+            saveToBackend(newRows, newRowCount, columnCount);
+            return newRows;
+        });
+        setTimeout(() => { isUserInputRef.current = false; }, 100);
+    }, [rowCount, columnCount, props.rowCountAttribute, saveToBackend]);
+
+    // ── Add column ────────────────────────────────────────────────────────────
+    const addColumn = useCallback(() => {
+        const newColCount = columnCount + 1;
+        if (newColCount > 100) { alert("Maximum 100 columns"); return; }
+        isUserInputRef.current = true;
+        setColumnCount(newColCount);
+        ignoreAttributeUpdateRef.current = true;
+        if (props.columnCountAttribute?.status === "available") props.columnCountAttribute.setValue(new Big(newColCount));
+        setTableRows(prevRows => {
+            const newRows = prevRows.map(row => ({
+                ...row,
+                cells: [...row.cells, { id: `cell_${row.rowIndex}_${newColCount}`, sequenceNumber: "-", isBlocked: false, isMerged: false, mergeId: "", isBlank: false, rowIndex: row.rowIndex, columnIndex: newColCount, checked: false, isSelected: false, rowSpan: 1, colSpan: 1, isHidden: false }]
+            }));
+            saveToBackend(newRows, rowCount, newColCount);
+            return newRows;
+        });
+        setTimeout(() => { isUserInputRef.current = false; }, 100);
+    }, [rowCount, columnCount, props.columnCountAttribute, saveToBackend]);
+
+    // ── Cell value change ─────────────────────────────────────────────────────
+    const handleCellValueChange = useCallback(
+        (rowIndex: number, colIndex: number, newValue: string) => {
+            setTableRows(prevRows => {
+                const newRows = prevRows.map(row => ({ ...row, cells: row.cells.map(cell => ({ ...cell })) }));
+                const targetCell = newRows.find(r => r.rowIndex === rowIndex)?.cells.find(c => c.columnIndex === colIndex);
+                if (!targetCell) return prevRows;
+                targetCell.sequenceNumber = newValue;
+                const isBlocked = newValue.trim() !== "" && newValue.trim() !== "-";
+                targetCell.isBlocked = isBlocked;
+                targetCell.isSelected = isBlocked;
+                if (targetCell.mergeId && targetCell.mergeId !== "") {
+                    const mergeId = targetCell.mergeId;
+                    newRows.forEach(row => row.cells.forEach(cell => {
+                        if (cell.mergeId === mergeId) { cell.sequenceNumber = newValue; cell.isBlocked = isBlocked; cell.isSelected = isBlocked; }
+                    }));
+                }
+                updateCellStatistics(newRows);
+                if (props.autoSave) saveToBackend(newRows, rowCount, columnCount);
+                return newRows;
+            });
+            if (props.onCellClick?.canExecute) props.onCellClick.execute();
+        },
+        [props.onCellClick, props.autoSave, updateCellStatistics, saveToBackend, rowCount, columnCount]
+    );
+
+    // ── Checkbox ──────────────────────────────────────────────────────────────
+    const handleCheckboxChange = useCallback(
+        (rowIndex: number, colIndex: number) => {
+            setTableRows(prevRows => {
+                const newRows = prevRows.map(row => ({ ...row, cells: row.cells.map(cell => ({ ...cell })) }));
+                const targetCell = newRows.find(r => r.rowIndex === rowIndex)?.cells.find(c => c.columnIndex === colIndex);
+                if (!targetCell) return prevRows;
+                const newChecked = !targetCell.checked;
+                targetCell.checked = newChecked;
+                if (targetCell.mergeId && targetCell.mergeId !== "") {
+                    const mergeId = targetCell.mergeId;
+                    newRows.forEach(row => row.cells.forEach(cell => { if (cell.mergeId === mergeId) cell.checked = newChecked; }));
+                }
+                return newRows;
+            });
+            if (props.onCellClick?.canExecute) props.onCellClick.execute();
+        },
+        [props.onCellClick]
+    );
+
+    // ── Rectangular selection ─────────────────────────────────────────────────
+    const getRectangularSelection = useCallback(
+        (startRow: number, startCol: number, endRow: number, endCol: number): Set<string> => {
+            const minRow = Math.min(startRow, endRow);
+            const maxRow = Math.max(startRow, endRow);
+            const minCol = Math.min(startCol, endCol);
+            const maxCol = Math.max(startCol, endCol);
+            const selection = new Set<string>();
+            for (let r = minRow; r <= maxRow; r++)
+                for (let c = minCol; c <= maxCol; c++)
+                    selection.add(`cell_${r}_${c}`);
+            return selection;
+        },
+        []
+    );
+
+    // ── Drag select ───────────────────────────────────────────────────────────
+    const handleCellMouseDown = useCallback(
+        (rowIndex: number, colIndex: number, event: React.MouseEvent) => {
+            if ((event.target as HTMLElement).tagName === "INPUT") return;
+            event.preventDefault();
+            preSelectionRef.current = new Set(selectedCells);
+            setIsDragging(true);
+            setDragStartCell({ row: rowIndex, col: colIndex });
+            setIsSelectionMode(true);
+            const cellId = `cell_${rowIndex}_${colIndex}`;
+            if (event.shiftKey) {
+                dragSelectionRef.current = new Set([cellId]);
+                setSelectedCells(prev => { const s = new Set(prev); s.add(cellId); return s; });
+            } else {
+                dragSelectionRef.current = new Set([cellId]);
+                setSelectedCells(new Set([cellId]));
+            }
+        },
+        [selectedCells]
+    );
+
+    const handleCellMouseEnter = useCallback(
+        (rowIndex: number, colIndex: number) => {
+            if (!isDragging || !dragStartCell) return;
+            const dragged = getRectangularSelection(dragStartCell.row, dragStartCell.col, rowIndex, colIndex);
+            dragSelectionRef.current = dragged;
+            const final = new Set(preSelectionRef.current);
+            dragged.forEach(c => final.add(c));
+            setSelectedCells(final);
+        },
+        [isDragging, dragStartCell, getRectangularSelection]
+    );
+
+    useEffect(() => {
+        const onUp = () => {
+            if (isDragging) { setIsDragging(false); setDragStartCell(null); preSelectionRef.current = new Set(); }
+        };
+        document.addEventListener("mouseup", onUp);
+        return () => document.removeEventListener("mouseup", onUp);
+    }, [isDragging]);
+
+    const handleCellClick = useCallback(
+        (rowIndex: number, colIndex: number, event?: React.MouseEvent) => {
+            if (isDragging) return;
+            const cellId = `cell_${rowIndex}_${colIndex}`;
+            if (props.onCellClick?.canExecute) props.onCellClick.execute();
+            const isCtrlOrCmd = event?.ctrlKey || event?.metaKey;
+            if (isSelectionMode) {
+                setSelectedCells(prev => {
+                    const s = new Set(prev);
+                    if (isCtrlOrCmd) {
+                        if (s.has(cellId) && s.size > 1) s.delete(cellId); else s.add(cellId);
+                    } else {
+                        if (s.has(cellId) && s.size === 1) return s;
+                        else s.add(cellId);
+                    }
+                    return s;
+                });
+            } else {
+                setSelectedCells(new Set([cellId]));
+                setIsSelectionMode(true);
+            }
+        },
+        [isSelectionMode, isDragging, props.onCellClick]
+    );
+
+    const selectAllCells = useCallback(() => {
+        const all = new Set<string>();
+        tableRows.forEach(row => row.cells.forEach(cell => { if (!cell.isHidden) all.add(cell.id); }));
+        setSelectedCells(all);
+        setIsSelectionMode(true);
+    }, [tableRows]);
+
+    const clearSelection = useCallback(() => {
+        setSelectedCells(new Set());
+        setIsSelectionMode(false);
+    }, []);
+
+    // ── Merge ─────────────────────────────────────────────────────────────────
+    const mergeCells = useCallback(() => {
+        if (selectedCells.size < 2) return;
+        const positions = Array.from(selectedCells).map(id => {
+            const parts = id.replace("cell_", "").split("_");
+            return { row: parseInt(parts[0]), col: parseInt(parts[1]) };
+        });
+        const minRow = Math.min(...positions.map(p => p.row));
+        const maxRow = Math.max(...positions.map(p => p.row));
+        const minCol = Math.min(...positions.map(p => p.col));
+        const maxCol = Math.max(...positions.map(p => p.col));
+        if (selectedCells.size !== (maxRow - minRow + 1) * (maxCol - minCol + 1)) {
+            alert("Please select a rectangular area to merge"); return;
+        }
+        setTableRows(prevRows => {
+            const newRows = prevRows.map(row => ({ ...row, cells: row.cells.map(cell => ({ ...cell })) }));
+            for (let r = minRow; r <= maxRow; r++) {
+                for (let c = minCol; c <= maxCol; c++) {
+                    const cell = newRows.find(row => row.rowIndex === r)?.cells.find(cl => cl.columnIndex === c);
+                    if (cell?.isMerged && cell.mergeId) {
+                        const oldId = cell.mergeId;
+                        newRows.forEach(row => row.cells.forEach(c2 => {
+                            if (c2.mergeId === oldId) { c2.isMerged = false; c2.rowSpan = 1; c2.colSpan = 1; c2.isHidden = false; c2.mergeId = ""; }
+                        }));
+                    }
+                }
+            }
+            const mergeId = createMergeId(minRow, minCol, maxRow, maxCol);
+            const topLeft = newRows.find(r => r.rowIndex === minRow)?.cells.find(c => c.columnIndex === minCol);
+            if (!topLeft) return prevRows;
+            for (let r = minRow; r <= maxRow; r++) {
+                for (let c = minCol; c <= maxCol; c++) {
+                    const cell = newRows.find(row => row.rowIndex === r)?.cells.find(cl => cl.columnIndex === c);
+                    if (!cell) continue;
+                    cell.sequenceNumber = topLeft.sequenceNumber;
+                    cell.checked = topLeft.checked;
+                    cell.isBlocked = topLeft.isBlocked;
+                    cell.isSelected = topLeft.isBlocked;
+                    cell.isBlank = topLeft.isBlank;
+                    cell.isMerged = true;
+                    cell.mergeId = mergeId;
+                    if (r === minRow && c === minCol) { cell.rowSpan = maxRow - minRow + 1; cell.colSpan = maxCol - minCol + 1; cell.isHidden = false; }
+                    else { cell.rowSpan = 1; cell.colSpan = 1; cell.isHidden = true; }
+                }
+            }
+            updateCellStatistics(newRows);
+            saveToBackend(newRows, rowCount, columnCount);
+            return newRows;
+        });
+        const sortedRows = Array.from(selectedCells).map(id => parseInt(id.replace("cell_", "").split("_")[0]));
+        const sortedCols = Array.from(selectedCells).map(id => parseInt(id.replace("cell_", "").split("_")[1]));
+        setSelectedCells(new Set([`cell_${Math.min(...sortedRows)}_${Math.min(...sortedCols)}`]));
+    }, [selectedCells, updateCellStatistics, saveToBackend, rowCount, columnCount]);
+
+    // ── Unmerge ───────────────────────────────────────────────────────────────
+    const unmergeCells = useCallback(() => {
+        if (selectedCells.size === 0) return;
+        const cellId = Array.from(selectedCells)[0];
+        const parts = cellId.replace("cell_", "").split("_");
+        const rowIndex = parseInt(parts[0]);
+        const colIndex = parseInt(parts[1]);
+        setTableRows(prevRows => {
+            const newRows = prevRows.map(row => ({ ...row, cells: row.cells.map(cell => ({ ...cell })) }));
+            const target = newRows.find(r => r.rowIndex === rowIndex)?.cells.find(c => c.columnIndex === colIndex);
+            if (!target?.isMerged) return prevRows;
+            const mergeId = target.mergeId;
+            newRows.forEach(row => row.cells.forEach(cell => {
+                if (cell.mergeId === mergeId) { cell.isMerged = false; cell.rowSpan = 1; cell.colSpan = 1; cell.isHidden = false; cell.mergeId = ""; }
+            }));
+            updateCellStatistics(newRows);
+            saveToBackend(newRows, rowCount, columnCount);
+            return newRows;
+        });
+    }, [selectedCells, updateCellStatistics, saveToBackend, rowCount, columnCount]);
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // BLANK / UNBLANK — same pattern as merge/unmerge
+    // Buttons only appear after cells are selected via drag, just like Merge.
+    // ══════════════════════════════════════════════════════════════════════════
+
+    const blankSelectedCells = useCallback(() => {
+        if (selectedCells.size === 0) return;
+        setTableRows(prevRows => {
+            const newRows = prevRows.map(row => ({ ...row, cells: row.cells.map(cell => ({ ...cell })) }));
+            selectedCells.forEach(cellId => {
+                const parts = cellId.replace("cell_", "").split("_");
+                const rowIndex = parseInt(parts[0]);
+                const colIndex = parseInt(parts[1]);
+                const cell = newRows.find(r => r.rowIndex === rowIndex)?.cells.find(c => c.columnIndex === colIndex);
+                if (!cell || cell.isHidden) return;
+                cell.isBlank = true;
+                if (cell.mergeId && cell.mergeId !== "") {
+                    const mergeId = cell.mergeId;
+                    newRows.forEach(row => row.cells.forEach(c => { if (c.mergeId === mergeId) c.isBlank = true; }));
+                }
+            });
+            updateCellStatistics(newRows);
+            saveToBackend(newRows, rowCount, columnCount);
+            return newRows;
+        });
+        setSelectedCells(new Set());
+        setIsSelectionMode(false);
+    }, [selectedCells, updateCellStatistics, saveToBackend, rowCount, columnCount]);
+
+    const unblankSelectedCells = useCallback(() => {
+        if (selectedCells.size === 0) return;
+        setTableRows(prevRows => {
+            const newRows = prevRows.map(row => ({ ...row, cells: row.cells.map(cell => ({ ...cell })) }));
+            selectedCells.forEach(cellId => {
+                const parts = cellId.replace("cell_", "").split("_");
+                const rowIndex = parseInt(parts[0]);
+                const colIndex = parseInt(parts[1]);
+                const cell = newRows.find(r => r.rowIndex === rowIndex)?.cells.find(c => c.columnIndex === colIndex);
+                if (!cell || cell.isHidden) return;
+                cell.isBlank = false;
+                if (cell.mergeId && cell.mergeId !== "") {
+                    const mergeId = cell.mergeId;
+                    newRows.forEach(row => row.cells.forEach(c => { if (c.mergeId === mergeId) c.isBlank = false; }));
+                }
+            });
+            updateCellStatistics(newRows);
+            saveToBackend(newRows, rowCount, columnCount);
+            return newRows;
+        });
+        setSelectedCells(new Set());
+        setIsSelectionMode(false);
+    }, [selectedCells, updateCellStatistics, saveToBackend, rowCount, columnCount]);
+
+    // ── Styles ────────────────────────────────────────────────────────────────
+    const tableStyle = { borderColor: props.tableBorderColor || "#dee2e6" };
+    const selectedCellStyle = { backgroundColor: props.selectedCellColor || "#cfe2ff" };
+    const mergedCellStyle = { backgroundColor: props.mergedCellColor || "#e3f2fd", borderColor: "#2196f3" };
+    const blankCellStyle = { backgroundColor: (props as any).blankCellColor || "#2c2c2c", borderColor: "#111" };
+    const blockedCellStyle = { backgroundColor: "white", borderColor: "#fdd835" };
+
+    const hasSelection = selectedCells.size > 0;
+    const hasBlankingEnabled = !!(props as any).enableCellBlanking;
+
+    // ── Render ────────────────────────────────────────────────────────────────
+    return (
+        <div className={classNames("tableview-container", props.class)} style={props.style}>
+
+            {/* ══ Controls bar ══ */}
+            <div className="tableview-controls">
+
+                {/* Generate Table */}
+                {props.showGenerateButton && (
+                    <button className="tableview-btn tableview-btn-primary" onClick={applyDimensions}>
+                        Generate Table
+                    </button>
+                )}
+
+                {/* ── Everything below only appears when cells are selected ── */}
+                {hasSelection && (
+                    createElement("div", { style: { display: "contents" } },
+
+                        /* Divider */
+                        createElement("div", { className: "tableview-controls-divider" }),
+
+                        /* Selection count badge */
+                        createElement("p", { className: "tableview-selection-info" },
+                            `${selectedCells.size} cell(s) selected`
+                        ),
+
+                        /* ── Select All ── */
+                        createElement("button", {
+                            className: "tableview-btn tableview-btn-info",
+                            onClick: selectAllCells,
+                            title: "Select all cells"
+                        }, "Select All"),
+
+                        /* ── Merge group ── */
+                        props.enableCellMerging && createElement("div", { style: { display: "contents" } },
+                            createElement("button", {
+                                className: "tableview-btn tableview-btn-warning",
+                                onClick: mergeCells,
+                                disabled: selectedCells.size < 2
+                            }, "Merge Selected"),
+                            createElement("button", {
+                                className: "tableview-btn tableview-btn-danger",
+                                onClick: unmergeCells
+                            }, "Unmerge")
+                        ),
+
+                        /* ── Blank group ── */
+                        hasBlankingEnabled && createElement("div", { style: { display: "contents" } },
+                            createElement("button", {
+                                className: "tableview-btn tableview-btn-blank",
+                                onClick: blankSelectedCells,
+                                title: "Hide selected cells visually — data is preserved"
+                            }, "Blank"),
+                            createElement("button", {
+                                className: "tableview-btn tableview-btn-unblank",
+                                onClick: unblankSelectedCells,
+                                title: "Restore selected blank cells back to normal"
+                            }, "Unblank")
+                        ),
+
+                        /* ── Clear Selection ── always last ── */
+                        createElement("button", {
+                            className: "tableview-btn tableview-btn-secondary",
+                            onClick: clearSelection
+                        }, "Clear Selection")
+                    )
+                )}
+
+                {/* Select All available even without a selection (convenience shortcut) */}
+                {!hasSelection && (props.enableCellMerging || hasBlankingEnabled) && (
+                    createElement("div", { style: { display: "contents" } },
+                        props.showGenerateButton && createElement("div", { className: "tableview-controls-divider" }),
+                        createElement("button", {
+                            className: "tableview-btn tableview-btn-info",
+                            onClick: selectAllCells,
+                            title: "Select all cells"
+                        }, "Select All")
+                    )
+                )}
+            </div>
+
+            {/* ══ Table ══ */}
+            <div className="tableview-table-section">
+                {props.showAddColumnButton && (
+                    <div className="tableview-add-column-container">
+                        <button className="tableview-btn tableview-btn-add" onClick={addColumn} title="Add Column">+</button>
+                    </div>
+                )}
+
+                <div className="tableview-table-row-wrapper">
+                    {props.showAddRowButton && (
+                        <div className="tableview-add-row-container">
+                            <button className="tableview-btn tableview-btn-add" onClick={addRow} title="Add Row">+</button>
+                        </div>
+                    )}
+
+                    <div
+                        className="tableview-table-wrapper"
+                        style={{ userSelect: isDragging ? "none" : "auto" }}
+                    >
+                        <table
+                            className="tableview-table"
+                            style={tableStyle}
+                            data-rows={rowCount}
+                            data-cols={columnCount}
+                        >
+                            <tbody>
+                                {tableRows.map(row => (
+                                    <tr key={row.id}>
+                                        {row.cells.map(cell => {
+                                            if (cell.isHidden) return null;
+                                            const isSelected = selectedCells.has(cell.id);
+
+                                            const cellInlineStyle = cell.isBlank
+                                                ? blankCellStyle
+                                                : isSelected
+                                                    ? selectedCellStyle
+                                                    : cell.isMerged
+                                                        ? mergedCellStyle
+                                                        : cell.isBlocked
+                                                            ? blockedCellStyle
+                                                            : {};
+
+                                            return (
+                                                <td
+                                                    key={cell.id}
+                                                    rowSpan={cell.rowSpan}
+                                                    colSpan={cell.colSpan}
+                                                    className={classNames("tableview-cell", {
+                                                        "tableview-cell-merged": cell.isMerged && !cell.isBlank,
+                                                        "tableview-cell-selected": isSelected && !cell.isBlank,
+                                                        "tableview-cell-blocked": cell.isBlocked && !cell.isBlank,
+                                                        "tableview-cell-blank": cell.isBlank,
+                                                        "tableview-cell-dragging": isDragging
+                                                    })}
+                                                    onClick={e => handleCellClick(cell.rowIndex, cell.columnIndex, e)}
+                                                    onMouseDown={e => handleCellMouseDown(cell.rowIndex, cell.columnIndex, e)}
+                                                    onMouseEnter={() => handleCellMouseEnter(cell.rowIndex, cell.columnIndex)}
+                                                    style={cellInlineStyle}
+                                                    title={cell.isBlank ? `Blanked — data: "${cell.sequenceNumber}"` : undefined}
+                                                >
+                                                    {!cell.isBlank && (
+                                                        <div className="tableview-cell-content">
+                                                            {props.enableCheckbox && (
+                                                                <input
+                                                                    type="checkbox"
+                                                                    className="tableview-checkbox"
+                                                                    checked={cell.checked}
+                                                                    onChange={e => { e.stopPropagation(); handleCheckboxChange(cell.rowIndex, cell.columnIndex); }}
+                                                                    onClick={e => e.stopPropagation()}
+                                                                />
+                                                            )}
+                                                            {props.enableCellEditing && (
+                                                                <input
+                                                                    type="text"
+                                                                    className="tableview-cell-input"
+                                                                    value={cell.sequenceNumber}
+                                                                    onChange={e => handleCellValueChange(cell.rowIndex, cell.columnIndex, e.target.value)}
+                                                                    onClick={e => e.stopPropagation()}
+                                                                    onMouseDown={e => e.stopPropagation()}
+                                                                    placeholder="#"
+                                                                />
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                </td>
+                                            );
+                                        })}
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            {/* ══ Info bar ══ */}
+            <div className="tableview-info">
+                <p><strong>Table:</strong> {rowCount} rows × {columnCount} columns = {rowCount * columnCount} cells</p>
+                <p><strong>Blocked:</strong> {tableRows.reduce((s, row) => s + row.cells.filter(c => c.isBlocked).length, 0)}</p>
+                <p><strong>Merged:</strong> {tableRows.reduce((s, row) => s + row.cells.filter(c => c.isMerged && !c.isHidden).length, 0)}</p>
+                {hasBlankingEnabled && (
+                    <p><strong>Blank:</strong> {tableRows.reduce((s, row) => s + row.cells.filter(c => c.isBlank && !c.isHidden).length, 0)}</p>
+                )}
+            </div>
+        </div>
+    );
+};
+
+export default Tableview;
+
+xml
+
+<?xml version="1.0" encoding="utf-8" ?>
+<widget
+    id="mxtechies.tableview.Tableview"
+    pluginWidget="true"
+    needsEntityContext="true"
+    offlineCapable="true"
+    supportedPlatform="Web"
+    xmlns="http://www.mendix.com/widget/1.0/"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.mendix.com/widget/1.0/ ../node_modules/mendix/custom_widget.xsd"
+>
+    <name>Tableview</name>
+    <description>Dyanamically add column and can merge the box also.</description>
+    <icon />
+    <properties>
+        <propertyGroup caption="General">
+            <propertyGroup caption="Table Configuration">
+                <!-- Dynamic Row/Column Attributes - MAIN CONFIGURATION -->
+                <property key="rowCountAttribute" type="attribute" required="false">
+                    <caption>Row</caption>
+                    <description>Integer attribute to bind row count dynamically. Set this attribute's value in a microflow to control the number of rows. If not set, defaults to 3 rows.</description>
+                    <attributeTypes>
+                        <attributeType name="Integer"/>
+                    </attributeTypes>
+                </property>
+                
+                <property key="columnCountAttribute" type="attribute" required="false">
+                    <caption>Column</caption>
+                    <description>Integer attribute to bind column count dynamically. Set this attribute's value in a microflow to control the number of columns. If not set, defaults to 3 columns.</description>
+                    <attributeTypes>
+                        <attributeType name="Integer"/>
+                    </attributeTypes>
+                </property>
+            </propertyGroup>
+            
+            <propertyGroup caption="Cell Statistics Attributes">
+                <property key="totalCellsAttribute" type="attribute" required="false">
+                    <caption>Total cells</caption>
+                    <description>Integer attribute to store total number of cells (rows × columns). Updated automatically when table changes.</description>
+                    <attributeTypes>
+                        <attributeType name="Integer"/>
+                    </attributeTypes>
+                </property>
+                
+                <property key="blockedCellsAttribute" type="attribute" required="false">
+                    <caption>Blocked Cell</caption>
+                    <description>Integer attribute to store count of blocked cells (cells with content). Updated automatically when cells are edited.</description>
+                    <attributeTypes>
+                        <attributeType name="Integer"/>
+                    </attributeTypes>
+                </property>
+                
+                <property key="mergedCellsAttribute" type="attribute" required="false">
+                    <caption>Merged cells</caption>
+                    <description>Integer attribute to store count of merged cell groups. Updated automatically when cells are merged/unmerged.</description>
+                    <attributeTypes>
+                        <attributeType name="Integer"/>
+                    </attributeTypes>
+                </property>
+
+                <property key="blankCellsAttribute" type="attribute" required="false">
+                    <caption>Blank cells</caption>
+                    <description>Integer attribute to store count of blanked (hidden/invisible) cells. Updated automatically when cells are blanked or unblanked.</description>
+                    <attributeTypes>
+                        <attributeType name="Integer"/>
+                    </attributeTypes>
+                </property>
+            </propertyGroup>
+            
+            <propertyGroup caption="Button Visibility">
+                <property key="showGenerateButton" type="boolean" defaultValue="false">
+                    <caption>Generate Table button</caption>
+                    <description>Show "Generate Table" button to regenerate the table with current row/column counts from attributes</description>
+                </property>
+                
+                <property key="showAddRowButton" type="boolean" defaultValue="true">
+                    <caption>Row button (+)</caption>
+                    <description>Show button to add rows without regenerating table</description>
+                </property>
+                
+                <property key="showAddColumnButton" type="boolean" defaultValue="true">
+                    <caption>Column button (+)</caption>
+                    <description>Show button to add columns without regenerating table</description>
+                </property>
+            </propertyGroup>
+
+            <propertyGroup caption="Features">
+                <property key="enableCellEditing" type="boolean" defaultValue="true">
+                    <caption>Enable cell editing</caption>
+                    <description>Allow users to edit cell content via input fields</description>
+                </property>
+                <property key="enableCheckbox" type="boolean" defaultValue="true">
+                    <caption>Enable checkbox</caption>
+                    <description>Show checkbox in each cell for boolean selection</description>
+                </property>
+                <property key="enableCellMerging" type="boolean" defaultValue="true">
+                    <caption>Enable cell merging</caption>
+                    <description>Allow users to merge cells horizontally and vertically</description>
+                </property>
+                <property key="enableCellBlanking" type="boolean" defaultValue="true">
+                    <caption>Enable cell blanking</caption>
+                    <description>Allow users to blank (visually hide/grey-out) selected cells by dragging and using the Blank / Unblank buttons. Blanked cells retain their data but appear invisible. When disabled, the Blank and Unblank buttons are hidden.</description>
+                </property>
+            </propertyGroup>
+        </propertyGroup>
+        <propertyGroup caption="Data Source">
+            <propertyGroup caption="Table Data">
+                <property key="useAttributeData" type="attribute" required="true">
+                    <caption>Table data</caption>
+                    <description>String attribute to store complete table data as JSON. Each cell is stored as an individual object with rowIndex, columnIndex, value, checked state, and merge properties. Must be Unlimited String type.</description>
+                    <attributeTypes>
+                        <attributeType name="String"/>
+                    </attributeTypes>
+                </property>
+                <property key="tableDataAttribute" type="attribute" required="false">
+                    <caption>Backup table data</caption>
+                    <description>Additional String attribute for backup storage or alternative data source. Same format as primary attribute. Can be used in microflow events to access/commit data.</description>
+                    <attributeTypes>
+                        <attributeType name="String"/>
+                    </attributeTypes>
+                </property>
+                <property key="autoSave" type="boolean" defaultValue="false">
+                    <caption>Auto save</caption>
+                    <description>Automatically save table state to attribute whenever any cell value, checkbox state, or table structure changes. When enabled, every change triggers an immediate save to the backend.</description>
+                </property>
+            </propertyGroup>
+        </propertyGroup>
+        <propertyGroup caption="Events">
+            <property key="onCellClick" type="action" required="false">
+                <caption>On cell click/value change</caption>
+                <description>Action executed when a cell is clicked, when any cell value changes, or when a checkbox is toggled. Use this to trigger microflows that process individual cell changes. The secondary attribute will contain the updated data.</description>
+            </property>
+            <property key="onTableChange" type="action" required="false">
+                <caption>On table structure change</caption>
+                <description>Action executed when the table structure changes (rows/columns added/removed, cells merged/unmerged, blanked/unblanked, or table regenerated). Use this for validation or post-processing. The secondary attribute will contain the updated data.</description>
+            </property>
+        </propertyGroup>
+        <propertyGroup caption="Style">
+            <propertyGroup caption="Styling">
+                <property key="tableBorderColor" type="string" required="false">
+                    <caption>Border color</caption>
+                    <description>CSS color for table borders. Default: #dee2e6 (gray). Accepts: hex (#dee2e6), rgb, rgba, or named colors (gray, silver, etc.)</description>
+                </property>
+                <property key="selectedCellColor" type="string" required="false">
+                    <caption>Selected cell color</caption>
+                    <description>CSS background color for selected cells during merge operations. Default: #cfe2ff (light blue). Accepts: hex, rgb, rgba, or named colors</description>
+                </property>
+                <property key="mergedCellColor" type="string" required="false">
+                    <caption>Merged cell color</caption>
+                    <description>CSS background color for merged cells. Default: #e3f2fd (light blue). Accepts: hex, rgb, rgba, or named colors (lightblue, skyblue, etc.)</description>
+                </property>
+                <property key="blankCellColor" type="string" required="false">
+                    <caption>Blank cell color</caption>
+                    <description>CSS background color for blanked cells. Default: #2c2c2c (dark/charcoal). Accepts: hex, rgb, rgba, or named colors (black, dimgray, etc.)</description>
+                </property>
+            </propertyGroup>
+        </propertyGroup>
+    </properties>
+</widget>
+
+css
+
+/* Tableview Component Styles */
+
+.tableview-container {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+    padding: 15px;
+    background-color: #f8f9fa;
+    border-radius: 8px;
+    width: 100%;
+    height: 100vh;
+    overflow: hidden;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+/* ── Controls ─────────────────────────────────────────────────────────────── */
+.tableview-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 15px 20px;
+    background-color: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    flex-shrink: 0;
+    flex-wrap: wrap;
+}
+
+.tableview-controls-divider {
+    width: 2px;
+    height: 32px;
+    background-color: #dee2e6;
+    margin: 0 4px;
+    flex-shrink: 0;
+}
+
+/* ── Buttons ──────────────────────────────────────────────────────────────── */
+.tableview-btn {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    white-space: nowrap;
+    gap: 5px;
+}
+
+.tableview-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.12);
+}
+
+.tableview-btn:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+}
+
+.tableview-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none !important;
+    box-shadow: none !important;
+}
+
+/* Primary — Generate Table */
+.tableview-btn-primary   { background-color: #667eea; color: white; }
+.tableview-btn-primary:hover { background-color: #5568d3; }
+
+/* Info — Select All */
+.tableview-btn-info      { background-color: #3498db; color: white; }
+.tableview-btn-info:hover { background-color: #2980b9; }
+
+/* Warning — Merge Selected */
+.tableview-btn-warning   { background-color: #f39c12; color: white; }
+.tableview-btn-warning:hover { background-color: #e67e22; }
+
+/* Danger — Unmerge */
+.tableview-btn-danger    { background-color: #e74c3c; color: white; }
+.tableview-btn-danger:hover { background-color: #c0392b; }
+
+/* Secondary — Clear Selection */
+.tableview-btn-secondary { background-color: #95a5a6; color: white; }
+.tableview-btn-secondary:hover { background-color: #7f8c8d; }
+
+/* Success */
+.tableview-btn-success   { background-color: #27ae60; color: white; }
+.tableview-btn-success:hover { background-color: #229954; }
+
+/* ── Blank — dark charcoal, matches the cell colour ─────────────────────── */
+.tableview-btn-blank {
+    background-color: #2c2c2c;
+    color: #f0f0f0;
+    border: 1px solid #444;
+}
+.tableview-btn-blank:hover {
+    background-color: #1a1a1a;
+    border-color: #666;
+    color: #fff;
+}
+
+/* ── Unblank — warm amber, signals "reveal" action ──────────────────────── */
+.tableview-btn-unblank {
+    background-color: #fff8e1;
+    color: #7c5c00;
+    border: 1.5px solid #f6cc52;
+}
+.tableview-btn-unblank:hover {
+    background-color: #fff3cd;
+    border-color: #f39c12;
+    color: #5c4000;
+}
+
+/* Selection count badge */
+.tableview-selection-info {
+    margin: 0;
+    padding: 6px 14px;
+    background-color: #e3f2fd;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #1976d2;
+    white-space: nowrap;
+}
+
+/* Add +/− row/col button */
+.tableview-btn-add {
+    min-width: 36px;
+    min-height: 36px;
+    width: 36px;
+    height: 36px;
+    font-size: 18px;
+    font-weight: bold;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+    box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+}
+
+.tableview-btn-add:hover {
+    transform: scale(1.08);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+.tableview-btn-add:active { transform: scale(1.02); }
+
+/* ── Table section ────────────────────────────────────────────────────────── */
+.tableview-table-section {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    background-color: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    padding: 15px;
+}
+
+.tableview-add-column-container {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 10px;
+}
+
+.tableview-table-row-wrapper {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+    gap: 10px;
+}
+
+.tableview-add-row-container {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.tableview-table-wrapper {
+    flex: 1;
+    overflow: auto;
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-start;
+    border-radius: 6px;
+    border: 1px solid #e9ecef;
+}
+
+.tableview-table {
+    border-collapse: collapse;
+    background-color: white;
+    width: auto;
+    table-layout: fixed;
+    margin: 0;
+}
+
+/* ── Default cell ─────────────────────────────────────────────────────────── */
+.tableview-cell {
+    border: 1px solid #dee2e6;
+    padding: 6px;
+    text-align: center;
+    vertical-align: middle;
+    background-color: white;
+    transition: background-color 0.12s, border-color 0.12s;
+    cursor: pointer;
+    position: relative;
+    font-size: 11px;
+    line-height: 1.3;
+    min-width: 60px;
+    width: 60px;
+    height: 50px;
+    box-sizing: border-box;
+}
+
+.tableview-cell-dragging { cursor: crosshair !important; }
+
+.tableview-cell:hover {
+    background-color: #f8f9fa;
+    border-color: #adb5bd;
+}
+
+/* Blocked */
+.tableview-cell-blocked {
+    background-color: white !important;
+    border: 1px solid #dee2e6 !important;
+}
+.tableview-cell-blocked:hover { background-color: #f8f9fa !important; }
+
+/* Merged */
+.tableview-cell-merged {
+    background-color: #e3f2fd !important;
+    border: 2px solid #2196f3 !important;
+}
+.tableview-cell-merged:hover { background-color: #bbdefb !important; }
+
+.tableview-cell-blocked.tableview-cell-merged {
+    background-color: #e3f2fd !important;
+    border: 3px solid #2196f3 !important;
+}
+
+/* Selected */
+.tableview-cell-selected {
+    background-color: #cfe2ff !important;
+    border: 3px solid #0d6efd !important;
+    box-shadow: 0 0 0 2px rgba(13, 110, 253, 0.25);
+}
+
+/* ── Blank ────────────────────────────────────────────────────────────────── */
+/*
+ * Blanked cells render as solid dark blocks.
+ * All child content (checkbox + input) is removed from the DOM when isBlank=true.
+ * The cell still occupies its grid space (rowSpan/colSpan are unchanged).
+ */
+.tableview-cell-blank {
+    background-color: #2c2c2c !important;
+    border: 1px solid #111 !important;
+    cursor: pointer;
+    /* Subtle diagonal texture so it reads as intentionally blanked */
+    background-image: repeating-linear-gradient(
+        45deg,
+        transparent,
+        transparent 5px,
+        rgba(255, 255, 255, 0.04) 5px,
+        rgba(255, 255, 255, 0.04) 10px
+    ) !important;
+}
+
+.tableview-cell-blank:hover {
+    background-color: #3d3d3d !important;
+    border-color: #555 !important;
+}
+
+/* Merged + blanked */
+.tableview-cell-blank.tableview-cell-merged {
+    background-color: #1a1a2e !important;
+    border: 2px solid #0d3b66 !important;
+}
+
+/* ── Cell content ─────────────────────────────────────────────────────────── */
+.tableview-cell-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    width: 100%;
+    height: 100%;
+    padding: 2px;
+}
+
+.tableview-checkbox {
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+    accent-color: #667eea;
+    margin: 0;
+    flex-shrink: 0;
+}
+
+.tableview-cell-input {
+    width: 100%;
+    max-width: 48px;
+    padding: 4px 6px;
+    border: 1px solid #ced4da;
+    border-radius: 3px;
+    font-size: 11px;
+    text-align: center;
+    transition: all 0.2s;
+    background-color: transparent;
+    height: 22px;
+    line-height: 1.2;
+    box-sizing: border-box;
+}
+
+.tableview-cell-input:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.2);
+    background-color: white;
+}
+
+.tableview-cell-input::placeholder {
+    color: #adb5bd;
+    font-size: 10px;
+}
+
+.tableview-cell-merged .tableview-cell-input {
+    max-width: 80px;
+    font-size: 12px;
+    height: 26px;
+    padding: 5px 8px;
+}
+
+/* ── Info bar ─────────────────────────────────────────────────────────────── */
+.tableview-info {
+    padding: 12px 20px;
+    background-color: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    display: flex;
+    gap: 25px;
+    flex-wrap: wrap;
+    flex-shrink: 0;
+}
+
+.tableview-info p {
+    margin: 0;
+    font-size: 13px;
+    color: #495057;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.tableview-info strong {
+    color: #212529;
+    font-weight: 600;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   RESPONSIVE CELL SIZING
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Small (3-5) */
+.tableview-table[data-rows="3"] .tableview-cell,
+.tableview-table[data-rows="4"] .tableview-cell,
+.tableview-table[data-rows="5"] .tableview-cell,
+.tableview-table[data-cols="3"] .tableview-cell,
+.tableview-table[data-cols="4"] .tableview-cell,
+.tableview-table[data-cols="5"] .tableview-cell {
+    min-width: 80px; width: 80px; height: 60px; font-size: 13px; padding: 8px;
+}
+.tableview-table[data-rows="3"] .tableview-cell-input,
+.tableview-table[data-rows="4"] .tableview-cell-input,
+.tableview-table[data-rows="5"] .tableview-cell-input,
+.tableview-table[data-cols="3"] .tableview-cell-input,
+.tableview-table[data-cols="4"] .tableview-cell-input,
+.tableview-table[data-cols="5"] .tableview-cell-input {
+    max-width: 60px; font-size: 12px; height: 26px; padding: 5px 8px;
+}
+.tableview-table[data-rows="3"] .tableview-checkbox,
+.tableview-table[data-rows="4"] .tableview-checkbox,
+.tableview-table[data-rows="5"] .tableview-checkbox,
+.tableview-table[data-cols="3"] .tableview-checkbox,
+.tableview-table[data-cols="4"] .tableview-checkbox,
+.tableview-table[data-cols="5"] .tableview-checkbox {
+    width: 16px; height: 16px;
+}
+
+/* Medium-small (6-10) */
+.tableview-table[data-rows="6"] .tableview-cell,
+.tableview-table[data-rows="7"] .tableview-cell,
+.tableview-table[data-rows="8"] .tableview-cell,
+.tableview-table[data-rows="9"] .tableview-cell,
+.tableview-table[data-rows="10"] .tableview-cell,
+.tableview-table[data-cols="6"] .tableview-cell,
+.tableview-table[data-cols="7"] .tableview-cell,
+.tableview-table[data-cols="8"] .tableview-cell,
+.tableview-table[data-cols="9"] .tableview-cell,
+.tableview-table[data-cols="10"] .tableview-cell {
+    min-width: 65px; width: 65px; height: 52px; font-size: 11px; padding: 6px;
+}
+.tableview-table[data-rows="6"] .tableview-cell-input,
+.tableview-table[data-rows="7"] .tableview-cell-input,
+.tableview-table[data-rows="8"] .tableview-cell-input,
+.tableview-table[data-rows="9"] .tableview-cell-input,
+.tableview-table[data-rows="10"] .tableview-cell-input,
+.tableview-table[data-cols="6"] .tableview-cell-input,
+.tableview-table[data-cols="7"] .tableview-cell-input,
+.tableview-table[data-cols="8"] .tableview-cell-input,
+.tableview-table[data-cols="9"] .tableview-cell-input,
+.tableview-table[data-cols="10"] .tableview-cell-input {
+    max-width: 50px; font-size: 11px; height: 24px; padding: 4px 6px;
+}
+.tableview-table[data-rows="6"] .tableview-checkbox,
+.tableview-table[data-rows="7"] .tableview-checkbox,
+.tableview-table[data-rows="8"] .tableview-checkbox,
+.tableview-table[data-rows="9"] .tableview-checkbox,
+.tableview-table[data-rows="10"] .tableview-checkbox,
+.tableview-table[data-cols="6"] .tableview-checkbox,
+.tableview-table[data-cols="7"] .tableview-checkbox,
+.tableview-table[data-cols="8"] .tableview-checkbox,
+.tableview-table[data-cols="9"] .tableview-checkbox,
+.tableview-table[data-cols="10"] .tableview-checkbox {
+    width: 14px; height: 14px;
+}
+
+/* Medium (11-15) */
+.tableview-table[data-rows="11"] .tableview-cell,
+.tableview-table[data-rows="12"] .tableview-cell,
+.tableview-table[data-rows="13"] .tableview-cell,
+.tableview-table[data-rows="14"] .tableview-cell,
+.tableview-table[data-rows="15"] .tableview-cell,
+.tableview-table[data-cols="11"] .tableview-cell,
+.tableview-table[data-cols="12"] .tableview-cell,
+.tableview-table[data-cols="13"] .tableview-cell,
+.tableview-table[data-cols="14"] .tableview-cell,
+.tableview-table[data-cols="15"] .tableview-cell {
+    min-width: 55px; width: 55px; height: 46px; font-size: 10px; padding: 5px;
+}
+.tableview-table[data-rows="11"] .tableview-cell-input,
+.tableview-table[data-rows="12"] .tableview-cell-input,
+.tableview-table[data-rows="13"] .tableview-cell-input,
+.tableview-table[data-rows="14"] .tableview-cell-input,
+.tableview-table[data-rows="15"] .tableview-cell-input,
+.tableview-table[data-cols="11"] .tableview-cell-input,
+.tableview-table[data-cols="12"] .tableview-cell-input,
+.tableview-table[data-cols="13"] .tableview-cell-input,
+.tableview-table[data-cols="14"] .tableview-cell-input,
+.tableview-table[data-cols="15"] .tableview-cell-input {
+    max-width: 42px; height: 22px; font-size: 10px; padding: 4px 5px;
+}
+.tableview-table[data-rows="11"] .tableview-checkbox,
+.tableview-table[data-rows="12"] .tableview-checkbox,
+.tableview-table[data-rows="13"] .tableview-checkbox,
+.tableview-table[data-rows="14"] .tableview-checkbox,
+.tableview-table[data-rows="15"] .tableview-checkbox,
+.tableview-table[data-cols="11"] .tableview-checkbox,
+.tableview-table[data-cols="12"] .tableview-checkbox,
+.tableview-table[data-cols="13"] .tableview-checkbox,
+.tableview-table[data-cols="14"] .tableview-checkbox,
+.tableview-table[data-cols="15"] .tableview-checkbox {
+    width: 13px; height: 13px;
+}
+
+/* Medium-large (16-20) */
+.tableview-table[data-rows="16"] .tableview-cell,
+.tableview-table[data-rows="17"] .tableview-cell,
+.tableview-table[data-rows="18"] .tableview-cell,
+.tableview-table[data-rows="19"] .tableview-cell,
+.tableview-table[data-rows="20"] .tableview-cell,
+.tableview-table[data-cols="16"] .tableview-cell,
+.tableview-table[data-cols="17"] .tableview-cell,
+.tableview-table[data-cols="18"] .tableview-cell,
+.tableview-table[data-cols="19"] .tableview-cell,
+.tableview-table[data-cols="20"] .tableview-cell {
+    min-width: 48px; width: 48px; height: 42px; font-size: 9px; padding: 4px;
+}
+.tableview-table[data-rows="16"] .tableview-cell-input,
+.tableview-table[data-rows="17"] .tableview-cell-input,
+.tableview-table[data-rows="18"] .tableview-cell-input,
+.tableview-table[data-rows="19"] .tableview-cell-input,
+.tableview-table[data-rows="20"] .tableview-cell-input,
+.tableview-table[data-cols="16"] .tableview-cell-input,
+.tableview-table[data-cols="17"] .tableview-cell-input,
+.tableview-table[data-cols="18"] .tableview-cell-input,
+.tableview-table[data-cols="19"] .tableview-cell-input,
+.tableview-table[data-cols="20"] .tableview-cell-input {
+    max-width: 38px; height: 20px; font-size: 9px; padding: 3px 4px;
+}
+.tableview-table[data-rows="16"] .tableview-checkbox,
+.tableview-table[data-rows="17"] .tableview-checkbox,
+.tableview-table[data-rows="18"] .tableview-checkbox,
+.tableview-table[data-rows="19"] .tableview-checkbox,
+.tableview-table[data-rows="20"] .tableview-checkbox,
+.tableview-table[data-cols="16"] .tableview-checkbox,
+.tableview-table[data-cols="17"] .tableview-checkbox,
+.tableview-table[data-cols="18"] .tableview-checkbox,
+.tableview-table[data-cols="19"] .tableview-checkbox,
+.tableview-table[data-cols="20"] .tableview-checkbox {
+    width: 12px; height: 12px;
+}
+
+/* Large (21-30) */
+.tableview-table[data-rows="21"] .tableview-cell,
+.tableview-table[data-rows="22"] .tableview-cell,
+.tableview-table[data-rows="23"] .tableview-cell,
+.tableview-table[data-rows="24"] .tableview-cell,
+.tableview-table[data-rows="25"] .tableview-cell,
+.tableview-table[data-rows="26"] .tableview-cell,
+.tableview-table[data-rows="27"] .tableview-cell,
+.tableview-table[data-rows="28"] .tableview-cell,
+.tableview-table[data-rows="29"] .tableview-cell,
+.tableview-table[data-rows="30"] .tableview-cell,
+.tableview-table[data-cols="21"] .tableview-cell,
+.tableview-table[data-cols="22"] .tableview-cell,
+.tableview-table[data-cols="23"] .tableview-cell,
+.tableview-table[data-cols="24"] .tableview-cell,
+.tableview-table[data-cols="25"] .tableview-cell,
+.tableview-table[data-cols="26"] .tableview-cell,
+.tableview-table[data-cols="27"] .tableview-cell,
+.tableview-table[data-cols="28"] .tableview-cell,
+.tableview-table[data-cols="29"] .tableview-cell,
+.tableview-table[data-cols="30"] .tableview-cell {
+    min-width: 42px; width: 42px; height: 38px; font-size: 9px; padding: 3px;
+}
+.tableview-table[data-rows="21"] .tableview-cell-input,
+.tableview-table[data-rows="22"] .tableview-cell-input,
+.tableview-table[data-rows="23"] .tableview-cell-input,
+.tableview-table[data-rows="24"] .tableview-cell-input,
+.tableview-table[data-rows="25"] .tableview-cell-input,
+.tableview-table[data-rows="26"] .tableview-cell-input,
+.tableview-table[data-rows="27"] .tableview-cell-input,
+.tableview-table[data-rows="28"] .tableview-cell-input,
+.tableview-table[data-rows="29"] .tableview-cell-input,
+.tableview-table[data-rows="30"] .tableview-cell-input,
+.tableview-table[data-cols="21"] .tableview-cell-input,
+.tableview-table[data-cols="22"] .tableview-cell-input,
+.tableview-table[data-cols="23"] .tableview-cell-input,
+.tableview-table[data-cols="24"] .tableview-cell-input,
+.tableview-table[data-cols="25"] .tableview-cell-input,
+.tableview-table[data-cols="26"] .tableview-cell-input,
+.tableview-table[data-cols="27"] .tableview-cell-input,
+.tableview-table[data-cols="28"] .tableview-cell-input,
+.tableview-table[data-cols="29"] .tableview-cell-input,
+.tableview-table[data-cols="30"] .tableview-cell-input {
+    max-width: 34px; height: 18px; font-size: 8px; padding: 3px 4px;
+}
+.tableview-table[data-rows="21"] .tableview-checkbox,
+.tableview-table[data-rows="22"] .tableview-checkbox,
+.tableview-table[data-rows="23"] .tableview-checkbox,
+.tableview-table[data-rows="24"] .tableview-checkbox,
+.tableview-table[data-rows="25"] .tableview-checkbox,
+.tableview-table[data-rows="26"] .tableview-checkbox,
+.tableview-table[data-rows="27"] .tableview-checkbox,
+.tableview-table[data-rows="28"] .tableview-checkbox,
+.tableview-table[data-rows="29"] .tableview-checkbox,
+.tableview-table[data-rows="30"] .tableview-checkbox,
+.tableview-table[data-cols="21"] .tableview-checkbox,
+.tableview-table[data-cols="22"] .tableview-checkbox,
+.tableview-table[data-cols="23"] .tableview-checkbox,
+.tableview-table[data-cols="24"] .tableview-checkbox,
+.tableview-table[data-cols="25"] .tableview-checkbox,
+.tableview-table[data-cols="26"] .tableview-checkbox,
+.tableview-table[data-cols="27"] .tableview-checkbox,
+.tableview-table[data-cols="28"] .tableview-checkbox,
+.tableview-table[data-cols="29"] .tableview-checkbox,
+.tableview-table[data-cols="30"] .tableview-checkbox {
+    width: 11px; height: 11px;
+}
+
+/* Very large (31-50) */
+.tableview-table[data-rows="31"] .tableview-cell,
+.tableview-table[data-rows="32"] .tableview-cell,
+.tableview-table[data-rows="33"] .tableview-cell,
+.tableview-table[data-rows="34"] .tableview-cell,
+.tableview-table[data-rows="35"] .tableview-cell,
+.tableview-table[data-rows="40"] .tableview-cell,
+.tableview-table[data-rows="45"] .tableview-cell,
+.tableview-table[data-rows="50"] .tableview-cell,
+.tableview-table[data-cols="31"] .tableview-cell,
+.tableview-table[data-cols="32"] .tableview-cell,
+.tableview-table[data-cols="33"] .tableview-cell,
+.tableview-table[data-cols="34"] .tableview-cell,
+.tableview-table[data-cols="35"] .tableview-cell,
+.tableview-table[data-cols="40"] .tableview-cell,
+.tableview-table[data-cols="45"] .tableview-cell,
+.tableview-table[data-cols="50"] .tableview-cell {
+    min-width: 38px; width: 38px; height: 34px; font-size: 8px; padding: 2px;
+}
+.tableview-table[data-rows="31"] .tableview-cell-input,
+.tableview-table[data-rows="32"] .tableview-cell-input,
+.tableview-table[data-rows="33"] .tableview-cell-input,
+.tableview-table[data-rows="34"] .tableview-cell-input,
+.tableview-table[data-rows="35"] .tableview-cell-input,
+.tableview-table[data-rows="40"] .tableview-cell-input,
+.tableview-table[data-rows="45"] .tableview-cell-input,
+.tableview-table[data-rows="50"] .tableview-cell-input,
+.tableview-table[data-cols="31"] .tableview-cell-input,
+.tableview-table[data-cols="32"] .tableview-cell-input,
+.tableview-table[data-cols="33"] .tableview-cell-input,
+.tableview-table[data-cols="34"] .tableview-cell-input,
+.tableview-table[data-cols="35"] .tableview-cell-input,
+.tableview-table[data-cols="40"] .tableview-cell-input,
+.tableview-table[data-cols="45"] .tableview-cell-input,
+.tableview-table[data-cols="50"] .tableview-cell-input {
+    max-width: 30px; height: 16px; font-size: 8px; padding: 2px 3px;
+}
+.tableview-table[data-rows="31"] .tableview-checkbox,
+.tableview-table[data-rows="32"] .tableview-checkbox,
+.tableview-table[data-rows="33"] .tableview-checkbox,
+.tableview-table[data-rows="34"] .tableview-checkbox,
+.tableview-table[data-rows="35"] .tableview-checkbox,
+.tableview-table[data-rows="40"] .tableview-checkbox,
+.tableview-table[data-rows="45"] .tableview-checkbox,
+.tableview-table[data-rows="50"] .tableview-checkbox,
+.tableview-table[data-cols="31"] .tableview-checkbox,
+.tableview-table[data-cols="32"] .tableview-checkbox,
+.tableview-table[data-cols="33"] .tableview-checkbox,
+.tableview-table[data-cols="34"] .tableview-checkbox,
+.tableview-table[data-cols="35"] .tableview-checkbox,
+.tableview-table[data-cols="40"] .tableview-checkbox,
+.tableview-table[data-cols="45"] .tableview-checkbox,
+.tableview-table[data-cols="50"] .tableview-checkbox {
+    width: 10px; height: 10px;
+}
+
+/* Extra large (60-100) */
+.tableview-table[data-rows="60"] .tableview-cell,
+.tableview-table[data-rows="70"] .tableview-cell,
+.tableview-table[data-rows="80"] .tableview-cell,
+.tableview-table[data-rows="90"] .tableview-cell,
+.tableview-table[data-rows="100"] .tableview-cell,
+.tableview-table[data-cols="60"] .tableview-cell,
+.tableview-table[data-cols="70"] .tableview-cell,
+.tableview-table[data-cols="80"] .tableview-cell,
+.tableview-table[data-cols="90"] .tableview-cell,
+.tableview-table[data-cols="100"] .tableview-cell {
+    min-width: 32px; width: 32px; height: 28px; font-size: 7px; padding: 1px;
+}
+.tableview-table[data-rows="60"] .tableview-cell-input,
+.tableview-table[data-rows="70"] .tableview-cell-input,
+.tableview-table[data-rows="80"] .tableview-cell-input,
+.tableview-table[data-rows="90"] .tableview-cell-input,
+.tableview-table[data-rows="100"] .tableview-cell-input,
+.tableview-table[data-cols="60"] .tableview-cell-input,
+.tableview-table[data-cols="70"] .tableview-cell-input,
+.tableview-table[data-cols="80"] .tableview-cell-input,
+.tableview-table[data-cols="90"] .tableview-cell-input,
+.tableview-table[data-cols="100"] .tableview-cell-input {
+    max-width: 26px; height: 14px; font-size: 7px; padding: 1px 2px;
+}
+.tableview-table[data-rows="60"] .tableview-checkbox,
+.tableview-table[data-rows="70"] .tableview-checkbox,
+.tableview-table[data-rows="80"] .tableview-checkbox,
+.tableview-table[data-rows="90"] .tableview-checkbox,
+.tableview-table[data-rows="100"] .tableview-checkbox,
+.tableview-table[data-cols="60"] .tableview-checkbox,
+.tableview-table[data-cols="70"] .tableview-checkbox,
+.tableview-table[data-cols="80"] .tableview-checkbox,
+.tableview-table[data-cols="90"] .tableview-checkbox,
+.tableview-table[data-cols="100"] .tableview-checkbox {
+    width: 8px; height: 8px;
+}
+
+/* Misc */
+.tableview-table tr { height: auto; }
+.tableview-hidden { display: none !important; }
+.tableview-loading { opacity: 0.6; pointer-events: none; }
+
+.tableview-table-wrapper::-webkit-scrollbar { width: 10px; height: 10px; }
+.tableview-table-wrapper::-webkit-scrollbar-track { background: #f1f3f5; border-radius: 5px; }
+.tableview-table-wrapper::-webkit-scrollbar-thumb { background: #adb5bd; border-radius: 5px; }
+.tableview-table-wrapper::-webkit-scrollbar-thumb:hover { background: #868e96; }
+.tableview-table-wrapper table { margin: 0; }
+.tableview-cell[rowspan], .tableview-cell[colspan] { box-sizing: border-box; }
