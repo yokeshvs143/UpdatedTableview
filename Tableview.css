@@ -1,0 +1,688 @@
+.tableview-container {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+    padding: 15px;
+    background-color: #f8f9fa;
+    border-radius: 8px;
+    width: 100%;
+    height: 100vh;
+    overflow: hidden;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+/* ========== CONTROLS SECTION - DISAPPEARS WHEN DISABLED ========== */
+.tableview-controls {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    padding: 15px 20px;
+    background-color: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    flex-shrink: 0;
+    flex-wrap: wrap;
+    animation: fadeInControls 0.2s ease-in-out;
+    margin: 0;
+}
+
+@keyframes fadeInControls {
+    from { opacity: 0; transform: translateY(-10px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.tableview-controls-divider {
+    width: 2px;
+    height: 32px;
+    background-color: #dee2e6;
+    margin: 0 5px;
+    flex-shrink: 0;
+}
+
+/* ========== BUTTON STYLES ========== */
+.tableview-btn {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    white-space: nowrap;
+}
+
+.tableview-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.12);
+}
+
+.tableview-btn:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+}
+
+.tableview-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none !important;
+}
+
+.tableview-btn-primary  { background-color: #667eea; color: white; }
+.tableview-btn-primary:hover  { background-color: #5568d3; }
+
+.tableview-btn-success  { background-color: #27ae60; color: white; }
+.tableview-btn-success:hover  { background-color: #229954; }
+
+.tableview-btn-purple   { background-color: #9b59b6; color: white; }
+.tableview-btn-purple:hover   { background-color: #8e44ad; }
+
+.tableview-btn-warning  { background-color: #f39c12; color: white; }
+.tableview-btn-warning:hover  { background-color: #e67e22; }
+
+.tableview-btn-danger   { background-color: #e74c3c; color: white; }
+.tableview-btn-danger:hover   { background-color: #c0392b; }
+
+.tableview-btn-secondary { background-color: #95a5a6; color: white; }
+.tableview-btn-secondary:hover { background-color: #7f8c8d; }
+
+.tableview-btn-info     { background-color: #3498db; color: white; }
+.tableview-btn-info:hover     { background-color: #2980b9; }
+
+.tableview-btn-dark     { background-color: #343a40; color: white; border-color: #343a40; }
+.tableview-btn-dark:hover     { background-color: #23272b; border-color: #1d2124; }
+
+.tableview-selection-info {
+    margin: 0;
+    padding: 6px 14px;
+    background-color: #e3f2fd;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #1976d2;
+}
+
+/* ========== TABLE SECTION ========== */
+.tableview-table-section {
+    flex: 1;
+    align-self: center;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    background-color: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    padding: 15px;
+}
+
+.tableview-add-column-container {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 10px;
+}
+
+.tableview-table-row-wrapper {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+    gap: 10px;
+}
+
+.tableview-add-row-container {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.tableview-btn-add {
+    min-width: 36px;
+    min-height: 36px;
+    width: 36px;
+    height: 36px;
+    font-size: 18px;
+    font-weight: bold;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+    box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+}
+
+.tableview-btn-add:hover  { transform: scale(1.08); box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4); }
+.tableview-btn-add:active { transform: scale(1.02); }
+
+.tableview-table-wrapper {
+    flex: 1;
+    overflow: auto;
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-start;
+    border-radius: 6px;
+    border: 1px solid #e9ecef;
+}
+
+.tableview-table {
+    border-collapse: collapse;
+    background-color: white;
+    width: auto;
+    table-layout: fixed;
+    margin: 0;
+}
+
+/* ========== CELL STYLES ========== */
+.tableview-cell {
+    border: 1px solid #dee2e6;
+    padding: 6px;
+    text-align: center;
+    vertical-align: middle;
+    background-color: white;
+    transition: all 0.15s;
+    cursor: pointer;
+    position: relative;
+    font-size: 11px;
+    line-height: 1.3;
+    min-width: 60px;
+    width: 60px;
+    height: 50px;
+    box-sizing: border-box;
+}
+
+/* Drag cursor — crosshair only, no pointer-events blocking */
+.tableview-cell-dragging {
+    cursor: crosshair !important;
+}
+.tableview-cell-dragging * {
+    cursor: crosshair !important;
+}
+
+.tableview-cell:hover {
+    background-color: #f8f9fa;
+    border-color: #adb5bd;
+}
+
+.tableview-cell-blocked {
+    background-color: white !important;
+    border: 1px solid #dee2e6 !important;
+}
+.tableview-cell-blocked:hover {
+    background-color: #f8f9fa !important;
+}
+
+.tableview-cell-merged {
+    background-color: #e3f2fd !important;
+    border: 2px solid #2196f3 !important;
+}
+.tableview-cell-merged:hover {
+    background-color: #bbdefb !important;
+}
+
+.tableview-cell-blocked.tableview-cell-merged {
+    background-color: #e3f2fd !important;
+    border: 3px solid #2196f3 !important;
+}
+
+.tableview-cell-selected {
+    background-color: #cfe2ff !important;
+    border: 3px solid #0d6efd !important;
+    box-shadow: 0 0 0 2px rgba(13, 110, 253, 0.25);
+}
+
+/* ========== BLANK CELLS ========== */
+.tableview-cell-blank {
+    background-color: transparent !important;
+    border: none !important;
+    border-color: transparent !important;
+    opacity: 1;
+    cursor: default;
+    pointer-events: auto;
+}
+
+.tableview-cell-blank .tableview-cell-content {
+    visibility: hidden;
+}
+
+.tableview-cell-blank.tableview-cell-dragging,
+.tableview-cell-blank.tableview-cell-selected.tableview-cell-dragging {
+    background-color: transparent !important;
+    border: none !important;
+    border-color: transparent !important;
+    box-shadow: none !important;
+    outline: none !important;
+}
+
+.tableview-cell-blank.tableview-cell-selected:not(.tableview-cell-dragging) {
+    background-color: rgb(253, 253, 253) !important;
+    border: 2px dashed #e5e8ec !important;
+    opacity: 1;
+}
+
+.tableview-cell-blank:hover:not(.tableview-cell-dragging) {
+    background-color: rgba(248, 249, 250, 0.3) !important;
+    border: 1px dashed #dee2e6 !important;
+}
+
+/* ========== CELL CONTENT ========== */
+.tableview-cell-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    width: 100%;
+    height: 100%;
+    padding: 2px;
+}
+
+.tableview-checkbox {
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+    accent-color: #667eea;
+    margin: 0;
+    flex-shrink: 0;
+}
+
+.tableview-checkbox:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+.tableview-cell-input {
+    width: 100%;
+    max-width: 48px;
+    padding: 4px 6px;
+    border: 1px solid #fdfeffe2;
+    border-radius: 3px;
+    font-size: 11px;
+    text-align: center;
+    transition: all 0.2s;
+    background-color: #f8f9fa;
+    height: 22px;
+    line-height: 1.2;
+    box-sizing: border-box;
+}
+
+.tableview-cell-input:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+    background-color: white;
+    color: #000000;
+}
+
+.tableview-cell-input:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.2);
+    background-color: white;
+}
+
+.tableview-cell-input:disabled:focus {
+    border-color: #ced4da;
+    box-shadow: none;
+    background-color: #f8f9fa;
+}
+
+.tableview-cell-input::placeholder {
+    color: #adb5bd;
+    font-size: 10px;
+}
+
+.tableview-cell-merged .tableview-cell-input {
+    max-width: 80px;
+    font-size: 12px;
+    height: 26px;
+    padding: 5px 8px;
+}
+
+/* ========== INFO SECTION ========== */
+.tableview-info {
+    padding: 12px 20px;
+    background-color: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    display: flex;
+    gap: 25px;
+    flex-wrap: wrap;
+    flex-shrink: 0;
+}
+
+.tableview-info p {
+    margin: 0;
+    font-size: 13px;
+    color: #495057;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.tableview-info strong {
+    color: #212529;
+    font-weight: 600;
+}
+
+/* ========== RESPONSIVE CELL SIZING ========== */
+.tableview-table[data-rows="3"] .tableview-cell,
+.tableview-table[data-rows="4"] .tableview-cell,
+.tableview-table[data-rows="5"] .tableview-cell,
+.tableview-table[data-cols="3"] .tableview-cell,
+.tableview-table[data-cols="4"] .tableview-cell,
+.tableview-table[data-cols="5"] .tableview-cell {
+    min-width: 80px; width: 80px; height: 60px; font-size: 13px; padding: 8px;
+}
+.tableview-table[data-rows="3"] .tableview-cell-input,
+.tableview-table[data-rows="4"] .tableview-cell-input,
+.tableview-table[data-rows="5"] .tableview-cell-input,
+.tableview-table[data-cols="3"] .tableview-cell-input,
+.tableview-table[data-cols="4"] .tableview-cell-input,
+.tableview-table[data-cols="5"] .tableview-cell-input {
+    max-width: 60px; font-size: 12px; height: 26px; padding: 5px 8px;
+}
+.tableview-table[data-rows="3"] .tableview-checkbox,
+.tableview-table[data-rows="4"] .tableview-checkbox,
+.tableview-table[data-rows="5"] .tableview-checkbox,
+.tableview-table[data-cols="3"] .tableview-checkbox,
+.tableview-table[data-cols="4"] .tableview-checkbox,
+.tableview-table[data-cols="5"] .tableview-checkbox {
+    width: 16px; height: 16px;
+}
+
+.tableview-table[data-rows="6"] .tableview-cell,
+.tableview-table[data-rows="7"] .tableview-cell,
+.tableview-table[data-rows="8"] .tableview-cell,
+.tableview-table[data-rows="9"] .tableview-cell,
+.tableview-table[data-rows="10"] .tableview-cell,
+.tableview-table[data-cols="6"] .tableview-cell,
+.tableview-table[data-cols="7"] .tableview-cell,
+.tableview-table[data-cols="8"] .tableview-cell,
+.tableview-table[data-cols="9"] .tableview-cell,
+.tableview-table[data-cols="10"] .tableview-cell {
+    min-width: 65px; width: 65px; height: 52px; font-size: 11px; padding: 6px;
+}
+.tableview-table[data-rows="6"] .tableview-cell-input,
+.tableview-table[data-rows="7"] .tableview-cell-input,
+.tableview-table[data-rows="8"] .tableview-cell-input,
+.tableview-table[data-rows="9"] .tableview-cell-input,
+.tableview-table[data-rows="10"] .tableview-cell-input,
+.tableview-table[data-cols="6"] .tableview-cell-input,
+.tableview-table[data-cols="7"] .tableview-cell-input,
+.tableview-table[data-cols="8"] .tableview-cell-input,
+.tableview-table[data-cols="9"] .tableview-cell-input,
+.tableview-table[data-cols="10"] .tableview-cell-input {
+    max-width: 50px; font-size: 11px; height: 24px; padding: 4px 6px;
+}
+.tableview-table[data-rows="6"] .tableview-checkbox,
+.tableview-table[data-rows="7"] .tableview-checkbox,
+.tableview-table[data-rows="8"] .tableview-checkbox,
+.tableview-table[data-rows="9"] .tableview-checkbox,
+.tableview-table[data-rows="10"] .tableview-checkbox,
+.tableview-table[data-cols="6"] .tableview-checkbox,
+.tableview-table[data-cols="7"] .tableview-checkbox,
+.tableview-table[data-cols="8"] .tableview-checkbox,
+.tableview-table[data-cols="9"] .tableview-checkbox,
+.tableview-table[data-cols="10"] .tableview-checkbox {
+    width: 14px; height: 14px;
+}
+
+.tableview-table[data-rows="11"] .tableview-cell,
+.tableview-table[data-rows="12"] .tableview-cell,
+.tableview-table[data-rows="13"] .tableview-cell,
+.tableview-table[data-rows="14"] .tableview-cell,
+.tableview-table[data-rows="15"] .tableview-cell,
+.tableview-table[data-cols="11"] .tableview-cell,
+.tableview-table[data-cols="12"] .tableview-cell,
+.tableview-table[data-cols="13"] .tableview-cell,
+.tableview-table[data-cols="14"] .tableview-cell,
+.tableview-table[data-cols="15"] .tableview-cell {
+    min-width: 55px; width: 55px; height: 46px; font-size: 10px; padding: 5px;
+}
+.tableview-table[data-rows="11"] .tableview-cell-input,
+.tableview-table[data-rows="12"] .tableview-cell-input,
+.tableview-table[data-rows="13"] .tableview-cell-input,
+.tableview-table[data-rows="14"] .tableview-cell-input,
+.tableview-table[data-rows="15"] .tableview-cell-input,
+.tableview-table[data-cols="11"] .tableview-cell-input,
+.tableview-table[data-cols="12"] .tableview-cell-input,
+.tableview-table[data-cols="13"] .tableview-cell-input,
+.tableview-table[data-cols="14"] .tableview-cell-input,
+.tableview-table[data-cols="15"] .tableview-cell-input {
+    max-width: 42px; height: 22px; font-size: 10px; padding: 4px 5px;
+}
+.tableview-table[data-rows="11"] .tableview-checkbox,
+.tableview-table[data-rows="12"] .tableview-checkbox,
+.tableview-table[data-rows="13"] .tableview-checkbox,
+.tableview-table[data-rows="14"] .tableview-checkbox,
+.tableview-table[data-rows="15"] .tableview-checkbox,
+.tableview-table[data-cols="11"] .tableview-checkbox,
+.tableview-table[data-cols="12"] .tableview-checkbox,
+.tableview-table[data-cols="13"] .tableview-checkbox,
+.tableview-table[data-cols="14"] .tableview-checkbox,
+.tableview-table[data-cols="15"] .tableview-checkbox {
+    width: 13px; height: 13px;
+}
+
+.tableview-table[data-rows="16"] .tableview-cell,
+.tableview-table[data-rows="17"] .tableview-cell,
+.tableview-table[data-rows="18"] .tableview-cell,
+.tableview-table[data-rows="19"] .tableview-cell,
+.tableview-table[data-rows="20"] .tableview-cell,
+.tableview-table[data-cols="16"] .tableview-cell,
+.tableview-table[data-cols="17"] .tableview-cell,
+.tableview-table[data-cols="18"] .tableview-cell,
+.tableview-table[data-cols="19"] .tableview-cell,
+.tableview-table[data-cols="20"] .tableview-cell {
+    min-width: 48px; width: 48px; height: 42px; font-size: 9px; padding: 4px;
+}
+.tableview-table[data-rows="16"] .tableview-cell-input,
+.tableview-table[data-rows="17"] .tableview-cell-input,
+.tableview-table[data-rows="18"] .tableview-cell-input,
+.tableview-table[data-rows="19"] .tableview-cell-input,
+.tableview-table[data-rows="20"] .tableview-cell-input,
+.tableview-table[data-cols="16"] .tableview-cell-input,
+.tableview-table[data-cols="17"] .tableview-cell-input,
+.tableview-table[data-cols="18"] .tableview-cell-input,
+.tableview-table[data-cols="19"] .tableview-cell-input,
+.tableview-table[data-cols="20"] .tableview-cell-input {
+    max-width: 38px; height: 20px; font-size: 9px; padding: 3px 4px;
+}
+.tableview-table[data-rows="16"] .tableview-checkbox,
+.tableview-table[data-rows="17"] .tableview-checkbox,
+.tableview-table[data-rows="18"] .tableview-checkbox,
+.tableview-table[data-rows="19"] .tableview-checkbox,
+.tableview-table[data-rows="20"] .tableview-checkbox,
+.tableview-table[data-cols="16"] .tableview-checkbox,
+.tableview-table[data-cols="17"] .tableview-checkbox,
+.tableview-table[data-cols="18"] .tableview-checkbox,
+.tableview-table[data-cols="19"] .tableview-checkbox,
+.tableview-table[data-cols="20"] .tableview-checkbox {
+    width: 12px; height: 12px;
+}
+
+.tableview-table[data-rows="21"] .tableview-cell,
+.tableview-table[data-rows="22"] .tableview-cell,
+.tableview-table[data-rows="23"] .tableview-cell,
+.tableview-table[data-rows="24"] .tableview-cell,
+.tableview-table[data-rows="25"] .tableview-cell,
+.tableview-table[data-rows="26"] .tableview-cell,
+.tableview-table[data-rows="27"] .tableview-cell,
+.tableview-table[data-rows="28"] .tableview-cell,
+.tableview-table[data-rows="29"] .tableview-cell,
+.tableview-table[data-rows="30"] .tableview-cell,
+.tableview-table[data-cols="21"] .tableview-cell,
+.tableview-table[data-cols="22"] .tableview-cell,
+.tableview-table[data-cols="23"] .tableview-cell,
+.tableview-table[data-cols="24"] .tableview-cell,
+.tableview-table[data-cols="25"] .tableview-cell,
+.tableview-table[data-cols="26"] .tableview-cell,
+.tableview-table[data-cols="27"] .tableview-cell,
+.tableview-table[data-cols="28"] .tableview-cell,
+.tableview-table[data-cols="29"] .tableview-cell,
+.tableview-table[data-cols="30"] .tableview-cell {
+    min-width: 42px; width: 42px; height: 38px; font-size: 9px; padding: 3px;
+}
+.tableview-table[data-rows="21"] .tableview-cell-input,
+.tableview-table[data-rows="22"] .tableview-cell-input,
+.tableview-table[data-rows="23"] .tableview-cell-input,
+.tableview-table[data-rows="24"] .tableview-cell-input,
+.tableview-table[data-rows="25"] .tableview-cell-input,
+.tableview-table[data-rows="26"] .tableview-cell-input,
+.tableview-table[data-rows="27"] .tableview-cell-input,
+.tableview-table[data-rows="28"] .tableview-cell-input,
+.tableview-table[data-rows="29"] .tableview-cell-input,
+.tableview-table[data-rows="30"] .tableview-cell-input,
+.tableview-table[data-cols="21"] .tableview-cell-input,
+.tableview-table[data-cols="22"] .tableview-cell-input,
+.tableview-table[data-cols="23"] .tableview-cell-input,
+.tableview-table[data-cols="24"] .tableview-cell-input,
+.tableview-table[data-cols="25"] .tableview-cell-input,
+.tableview-table[data-cols="26"] .tableview-cell-input,
+.tableview-table[data-cols="27"] .tableview-cell-input,
+.tableview-table[data-cols="28"] .tableview-cell-input,
+.tableview-table[data-cols="29"] .tableview-cell-input,
+.tableview-table[data-cols="30"] .tableview-cell-input {
+    max-width: 34px; height: 18px; font-size: 8px; padding: 3px 4px;
+}
+.tableview-table[data-rows="21"] .tableview-checkbox,
+.tableview-table[data-rows="22"] .tableview-checkbox,
+.tableview-table[data-rows="23"] .tableview-checkbox,
+.tableview-table[data-rows="24"] .tableview-checkbox,
+.tableview-table[data-rows="25"] .tableview-checkbox,
+.tableview-table[data-rows="26"] .tableview-checkbox,
+.tableview-table[data-rows="27"] .tableview-checkbox,
+.tableview-table[data-rows="28"] .tableview-checkbox,
+.tableview-table[data-rows="29"] .tableview-checkbox,
+.tableview-table[data-rows="30"] .tableview-checkbox,
+.tableview-table[data-cols="21"] .tableview-checkbox,
+.tableview-table[data-cols="22"] .tableview-checkbox,
+.tableview-table[data-cols="23"] .tableview-checkbox,
+.tableview-table[data-cols="24"] .tableview-checkbox,
+.tableview-table[data-cols="25"] .tableview-checkbox,
+.tableview-table[data-cols="26"] .tableview-checkbox,
+.tableview-table[data-cols="27"] .tableview-checkbox,
+.tableview-table[data-cols="28"] .tableview-checkbox,
+.tableview-table[data-cols="29"] .tableview-checkbox,
+.tableview-table[data-cols="30"] .tableview-checkbox {
+    width: 11px; height: 11px;
+}
+
+.tableview-table[data-rows="31"] .tableview-cell,
+.tableview-table[data-rows="32"] .tableview-cell,
+.tableview-table[data-rows="33"] .tableview-cell,
+.tableview-table[data-rows="34"] .tableview-cell,
+.tableview-table[data-rows="35"] .tableview-cell,
+.tableview-table[data-rows="40"] .tableview-cell,
+.tableview-table[data-rows="45"] .tableview-cell,
+.tableview-table[data-rows="50"] .tableview-cell,
+.tableview-table[data-cols="31"] .tableview-cell,
+.tableview-table[data-cols="32"] .tableview-cell,
+.tableview-table[data-cols="33"] .tableview-cell,
+.tableview-table[data-cols="34"] .tableview-cell,
+.tableview-table[data-cols="35"] .tableview-cell,
+.tableview-table[data-cols="40"] .tableview-cell,
+.tableview-table[data-cols="45"] .tableview-cell,
+.tableview-table[data-cols="50"] .tableview-cell {
+    min-width: 38px; width: 38px; height: 34px; font-size: 8px; padding: 2px;
+}
+.tableview-table[data-rows="31"] .tableview-cell-input,
+.tableview-table[data-rows="32"] .tableview-cell-input,
+.tableview-table[data-rows="33"] .tableview-cell-input,
+.tableview-table[data-rows="34"] .tableview-cell-input,
+.tableview-table[data-rows="35"] .tableview-cell-input,
+.tableview-table[data-rows="40"] .tableview-cell-input,
+.tableview-table[data-rows="45"] .tableview-cell-input,
+.tableview-table[data-rows="50"] .tableview-cell-input,
+.tableview-table[data-cols="31"] .tableview-cell-input,
+.tableview-table[data-cols="32"] .tableview-cell-input,
+.tableview-table[data-cols="33"] .tableview-cell-input,
+.tableview-table[data-cols="34"] .tableview-cell-input,
+.tableview-table[data-cols="35"] .tableview-cell-input,
+.tableview-table[data-cols="40"] .tableview-cell-input,
+.tableview-table[data-cols="45"] .tableview-cell-input,
+.tableview-table[data-cols="50"] .tableview-cell-input {
+    max-width: 30px; height: 16px; font-size: 8px; padding: 2px 3px;
+}
+.tableview-table[data-rows="31"] .tableview-checkbox,
+.tableview-table[data-rows="32"] .tableview-checkbox,
+.tableview-table[data-rows="33"] .tableview-checkbox,
+.tableview-table[data-rows="34"] .tableview-checkbox,
+.tableview-table[data-rows="35"] .tableview-checkbox,
+.tableview-table[data-rows="40"] .tableview-checkbox,
+.tableview-table[data-rows="45"] .tableview-checkbox,
+.tableview-table[data-rows="50"] .tableview-checkbox,
+.tableview-table[data-cols="31"] .tableview-checkbox,
+.tableview-table[data-cols="32"] .tableview-checkbox,
+.tableview-table[data-cols="33"] .tableview-checkbox,
+.tableview-table[data-cols="34"] .tableview-checkbox,
+.tableview-table[data-cols="35"] .tableview-checkbox,
+.tableview-table[data-cols="40"] .tableview-checkbox,
+.tableview-table[data-cols="45"] .tableview-checkbox,
+.tableview-table[data-cols="50"] .tableview-checkbox {
+    width: 10px; height: 10px;
+}
+
+.tableview-table[data-rows="60"] .tableview-cell,
+.tableview-table[data-rows="70"] .tableview-cell,
+.tableview-table[data-rows="80"] .tableview-cell,
+.tableview-table[data-rows="90"] .tableview-cell,
+.tableview-table[data-rows="100"] .tableview-cell,
+.tableview-table[data-cols="60"] .tableview-cell,
+.tableview-table[data-cols="70"] .tableview-cell,
+.tableview-table[data-cols="80"] .tableview-cell,
+.tableview-table[data-cols="90"] .tableview-cell,
+.tableview-table[data-cols="100"] .tableview-cell {
+    min-width: 32px; width: 32px; height: 28px; font-size: 7px; padding: 1px;
+}
+.tableview-table[data-rows="60"] .tableview-cell-input,
+.tableview-table[data-rows="70"] .tableview-cell-input,
+.tableview-table[data-rows="80"] .tableview-cell-input,
+.tableview-table[data-rows="90"] .tableview-cell-input,
+.tableview-table[data-rows="100"] .tableview-cell-input,
+.tableview-table[data-cols="60"] .tableview-cell-input,
+.tableview-table[data-cols="70"] .tableview-cell-input,
+.tableview-table[data-cols="80"] .tableview-cell-input,
+.tableview-table[data-cols="90"] .tableview-cell-input,
+.tableview-table[data-cols="100"] .tableview-cell-input {
+    max-width: 26px; height: 14px; font-size: 7px; padding: 1px 2px;
+}
+.tableview-table[data-rows="60"] .tableview-checkbox,
+.tableview-table[data-rows="70"] .tableview-checkbox,
+.tableview-table[data-rows="80"] .tableview-checkbox,
+.tableview-table[data-rows="90"] .tableview-checkbox,
+.tableview-table[data-rows="100"] .tableview-checkbox,
+.tableview-table[data-cols="60"] .tableview-checkbox,
+.tableview-table[data-cols="70"] .tableview-checkbox,
+.tableview-table[data-cols="80"] .tableview-checkbox,
+.tableview-table[data-cols="90"] .tableview-checkbox,
+.tableview-table[data-cols="100"] .tableview-checkbox {
+    width: 8px; height: 8px;
+}
+
+/* ========== UTILITIES ========== */
+.tableview-table tr { height: auto; }
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-5px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.tableview-hidden  { display: none !important; }
+.tableview-loading { opacity: 0.6; pointer-events: none; }
+
+/* ========== SCROLLBAR STYLING ========== */
+.tableview-table-wrapper::-webkit-scrollbar        { width: 10px; height: 10px; }
+.tableview-table-wrapper::-webkit-scrollbar-track  { background: #f1f3f5; border-radius: 5px; }
+.tableview-table-wrapper::-webkit-scrollbar-thumb  { background: #adb5bd; border-radius: 5px; }
+.tableview-table-wrapper::-webkit-scrollbar-thumb:hover { background: #868e96; }
+.tableview-table-wrapper table                     { margin: 0; }
+
+.tableview-cell[rowspan],
+.tableview-cell[colspan] { box-sizing: border-box; }

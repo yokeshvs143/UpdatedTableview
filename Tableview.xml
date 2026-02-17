@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="utf-8"?>
+<widget id="mxtechies.tableview.Tableview" pluginWidget="true" needsEntityContext="true" offlineCapable="true"
+        supportedPlatform="Web"
+        xmlns="http://www.mendix.com/widget/1.0/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.mendix.com/widget/1.0/ ../node_modules/mendix/custom_widget.xsd">
+    <name>Tableview</name>
+    <description>Widget that generates dynamic table that rows and columns get from the user</description>
+    <icon/>
+   <properties>
+        <propertyGroup caption="General">
+            <propertyGroup caption="Table Configuration">
+                <!-- Dynamic Row/Column Attributes - MAIN CONFIGURATION -->
+                <property key="rowCountAttribute" type="attribute" required="false">
+                    <caption>Row</caption>
+                    <description>Integer attribute to bind row count dynamically. Set this attribute's value in a microflow to control the number of rows. If not set, defaults to 3 rows.</description>
+                    <attributeTypes>
+                        <attributeType name="Integer"/>
+                    </attributeTypes>
+                </property>
+                
+                <property key="columnCountAttribute" type="attribute" required="false">
+                    <caption>Column</caption>
+                    <description>Integer attribute to bind column count dynamically. Set this attribute's value in a microflow to control the number of columns. If not set, defaults to 3 columns.</description>
+                    <attributeTypes>
+                        <attributeType name="Integer"/>
+                    </attributeTypes>
+                </property>
+            </propertyGroup>
+            
+            <propertyGroup caption="Cell Statistics Attributes">
+                <property key="totalCellsAttribute" type="attribute" required="false">
+                    <caption>Total cells</caption>
+                    <description>Integer attribute to store total number of cells (rows × columns). Updated automatically when table changes.</description>
+                    <attributeTypes>
+                        <attributeType name="Integer"/>
+                    </attributeTypes>
+                </property>
+                
+                <property key="blockedCellsAttribute" type="attribute" required="false">
+                    <caption>Blocked Cell</caption>
+                    <description>Integer attribute to store count of blocked cells (cells with content). Updated automatically when cells are edited.</description>
+                    <attributeTypes>
+                        <attributeType name="Integer"/>
+                    </attributeTypes>
+                </property>
+                
+                <property key="mergedCellsAttribute" type="attribute" required="false">
+                    <caption>Merged cells</caption>
+                    <description>Integer attribute to store count of merged cell groups. Updated automatically when cells are merged/unmerged.</description>
+                    <attributeTypes>
+                        <attributeType name="Integer"/>
+                    </attributeTypes>
+                </property>
+            </propertyGroup>
+            
+            <propertyGroup caption="Button Visibility">
+                <property key="showGenerateButton" type="boolean" defaultValue="false">
+                    <caption>Generate Table button</caption>
+                    <description>Show "Generate Table" button to regenerate the table with current row/column counts from attributes</description>
+                </property>
+                
+                <property key="showAddRowButton" type="boolean" defaultValue="true">
+                    <caption>Row button (+)</caption>
+                    <description>Show button to add rows without regenerating table</description>
+                </property>
+                
+                <property key="showAddColumnButton" type="boolean" defaultValue="true">
+                    <caption>Column button (+)</caption>
+                    <description>Show button to add columns without regenerating table</description>
+                </property>
+            </propertyGroup>
+            <propertyGroup caption="Features">
+                <property key="enableCellEditing" type="boolean" defaultValue="true">
+                    <caption>Enable cell editing</caption>
+                    <description>Allow users to edit cell content via input fields</description>
+                </property>
+                <property key="enableCheckbox" type="boolean" defaultValue="true">
+                    <caption>Enable checkbox</caption>
+                    <description>Show checkbox in each cell for boolean selection</description>
+                </property>
+                <property key="enableCellMerging" type="boolean" defaultValue="true">
+                    <caption>Enable cell merging</caption>
+                    <description>Allow users to merge cells horizontally and vertically</description>
+                </property>
+                <property key="enableBlankCells" type="boolean" defaultValue="true">
+                    <caption>Enable blank cells</caption>
+                    <description>Allow users to blank/hide selected cells while maintaining table structure. Blank and Unblank buttons will appear when cells are selected.</description>
+                </property>
+            </propertyGroup>
+        </propertyGroup>
+        <propertyGroup caption="Data Source">
+            <propertyGroup caption="Table Data">
+                <property key="useAttributeData" type="attribute" required="true">
+                    <caption>Table data</caption>
+                    <description>String attribute to store complete table data as JSON. Each cell is stored as an individual object with rowIndex, columnIndex, value, checked state, and merge properties. Must be Unlimited String type.</description>
+                    <attributeTypes>
+                        <attributeType name="String"/>
+                    </attributeTypes>
+                </property>
+                <property key="tableDataAttribute" type="attribute" required="false">
+                    <caption>Backup table data</caption>
+                    <description>Additional String attribute for backup storage or alternative data source. Same format as primary attribute. Can be used in microflow events to access/commit data.</description>
+                    <attributeTypes>
+                        <attributeType name="String"/>
+                    </attributeTypes>
+                </property>
+                <property key="autoSave" type="boolean" defaultValue="false">
+                    <caption>Auto save</caption>
+                    <description>Automatically save table state to attribute whenever any cell value, checkbox state, or table structure changes. When enabled, every change triggers an immediate save to the backend.</description>
+                </property>
+            </propertyGroup>
+        </propertyGroup>
+        <propertyGroup caption="Events">
+            <property key="onCellClick" type="action" required="false">
+                <caption>On cell click/value change</caption>
+                <description>Action executed when a cell is clicked, when any cell value changes, or when a checkbox is toggled. Use this to trigger microflows that process individual cell changes. The secondary attribute will contain the updated data.</description>
+            </property>
+            <property key="onTableChange" type="action" required="false">
+                <caption>On table structure change</caption>
+                <description>Action executed when the table structure changes (rows/columns added/removed, cells merged/unmerged, or table regenerated). Use this for validation or post-processing. The secondary attribute will contain the updated data.</description>
+            </property>
+        </propertyGroup>
+        <propertyGroup caption="Style">
+            <propertyGroup caption="Styling">
+                <property key="tableBorderColor" type="string" required="false">
+                    <caption>Border color</caption>
+                    <description>CSS color for table borders. Default: #dee2e6 (gray). Accepts: hex (#dee2e6), rgb, rgba, or named colors (gray, silver, etc.)</description>
+                </property>
+                <property key="selectedCellColor" type="string" required="false">
+                    <caption>Selected cell color</caption>
+                    <description>CSS background color for selected cells during merge operations. Default: #cfe2ff (light blue). Accepts: hex, rgb, rgba, or named colors</description>
+                </property>
+                <property key="mergedCellColor" type="string" required="false">
+                    <caption>Merged cell color</caption>
+                    <description>CSS background color for merged cells. Default: #e3f2fd (light blue). Accepts: hex, rgb, rgba, or named colors (lightblue, skyblue, etc.)</description>
+                </property>
+            </propertyGroup>
+        </propertyGroup>
+    </properties>
+</widget>
