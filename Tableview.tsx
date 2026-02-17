@@ -4,6 +4,7 @@ import { TableviewContainerProps } from "../typings/TableviewProps";
 import Big from "big.js";
 import "./ui/Tableview.css";
 
+// ── Interfaces ────────────────────────────────────────────────────────────────
 interface CellObject {
     id: string;
     sequenceNumber: string;
@@ -33,26 +34,31 @@ interface TableData {
     metadata?: { createdAt?: string; updatedAt?: string };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Helper: walk up the DOM from any element and return the first <td data-cellid>
-// ─────────────────────────────────────────────────────────────────────────────
-function findCellTd(el: Element | null): HTMLElement | null {
+// ── Pure helpers (module-level, no hooks) ─────────────────────────────────────
+
+// Walk up DOM from any element to find nearest <td data-cellid="...">
+function getTdCell(el: Element | null): HTMLElement | null {
     let cur = el;
     while (cur) {
-        if (cur.tagName === "TD" && (cur as HTMLElement).dataset.cellid) return cur as HTMLElement;
+        if (cur.tagName === "TD" && (cur as HTMLElement).dataset.cellid)
+            return cur as HTMLElement;
         cur = cur.parentElement;
     }
     return null;
 }
 
-function parseCellId(cellId: string): { row: number; col: number } | null {
-    // format: cell_ROW_COL
-    const parts = cellId.replace("cell_", "").split("_");
-    if (parts.length < 2) return null;
-    return { row: parseInt(parts[0], 10), col: parseInt(parts[1], 10) };
+// Parse "cell_R_C" → {row, col}
+function parseCellId(id: string): { row: number; col: number } | null {
+    const p = id.replace("cell_", "").split("_");
+    if (p.length < 2) return null;
+    const row = parseInt(p[0], 10);
+    const col = parseInt(p[1], 10);
+    if (isNaN(row) || isNaN(col)) return null;
+    return { row, col };
 }
 
-function buildRectSet(r1: number, c1: number, r2: number, c2: number): Set<string> {
+// Build a Set of all cell IDs in the rectangle defined by two corners
+function rectSet(r1: number, c1: number, r2: number, c2: number): Set<string> {
     const s = new Set<string>();
     for (let r = Math.min(r1, r2); r <= Math.max(r1, r2); r++)
         for (let c = Math.min(c1, c2); c <= Math.max(c1, c2); c++)
@@ -60,114 +66,123 @@ function buildRectSet(r1: number, c1: number, r2: number, c2: number): Set<strin
     return s;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Component ─────────────────────────────────────────────────────────────────
 const Tableview = (props: TableviewContainerProps): ReactElement => {
 
-    const getInitialRows = () => {
+    // ── Initial counts from Mendix attributes ─────────────────────────────────
+    const initRows = () => {
         if (props.rowCountAttribute?.status === "available" && props.rowCountAttribute.value)
-            return Number(props.rowCountAttribute.value);
+            return Math.max(1, Number(props.rowCountAttribute.value));
         return 3;
     };
-    const getInitialColumns = () => {
+    const initCols = () => {
         if (props.columnCountAttribute?.status === "available" && props.columnCountAttribute.value)
-            return Number(props.columnCountAttribute.value);
+            return Math.max(1, Number(props.columnCountAttribute.value));
         return 3;
     };
 
-    const [rowCount, setRowCount]           = useState<number>(getInitialRows());
-    const [columnCount, setColumnCount]     = useState<number>(getInitialColumns());
-    const [tableRows, setTableRows]         = useState<TableRow[]>([]);
+    // ── State ─────────────────────────────────────────────────────────────────
+    const [rowCount,      setRowCount]      = useState<number>(initRows());
+    const [columnCount,   setColumnCount]   = useState<number>(initCols());
+    const [tableRows,     setTableRows]     = useState<TableRow[]>([]);
     const [selectedCells, setSelectedCells] = useState<Set<string>>(new Set());
-    const [isDragging, setIsDragging]       = useState<boolean>(false);
-
-    // ── Misc ─────────────────────────────────────────────────────────────────
+    const [isDragging,    setIsDragging]    = useState<boolean>(false);
     const [isInitialLoad, setIsInitialLoad] = useState<boolean>(true);
-    const [isSaving, setIsSaving]           = useState<boolean>(false);
-    const [dataLoaded, setDataLoaded]       = useState<boolean>(false);
-    const lastSavedDataRef                  = useRef<string>("");
-    const isUserInputRef                    = useRef<boolean>(false);
-    const ignoreAttributeUpdateRef          = useRef<boolean>(false);
-    const latestTableStateRef               = useRef<{ rows: TableRow[]; rowCount: number; columnCount: number } | null>(null);
-    const saveTimeoutRef                    = useRef<NodeJS.Timeout | null>(null);
+    const [isSaving,      setIsSaving]      = useState<boolean>(false);
+    const [dataLoaded,    setDataLoaded]    = useState<boolean>(false);
 
-    // ── Pointer / drag refs (never cause re-render during drag) ───────────────
-    const tableWrapperRef   = useRef<HTMLDivElement>(null);
-    const isDraggingRef     = useRef<boolean>(false);
-    const dragStartRef      = useRef<{ row: number; col: number } | null>(null);
-    const dragHasMovedRef   = useRef<boolean>(false);
-    // Track last double-click time to distinguish single vs double click
-    const lastClickTimeRef  = useRef<number>(0);
-    const lastClickCellRef  = useRef<string>("");
+    // ── Stable refs (mutations don't trigger renders) ─────────────────────────
+    const lastSavedRef          = useRef<string>("");
+    const isUserInputRef        = useRef<boolean>(false);
+    const ignoreAttrUpdateRef   = useRef<boolean>(false);
+    const latestStateRef        = useRef<{ rows: TableRow[]; rc: number; cc: number } | null>(null);
+    const saveTimerRef          = useRef<NodeJS.Timeout | null>(null);
+
+    // Drag refs — written/read only in event handlers, never trigger renders
+    const dragging              = useRef<boolean>(false);
+    const dragStart             = useRef<{ row: number; col: number } | null>(null);
+    const dragMoved             = useRef<boolean>(false);
+
+    // Double-click detection
+    const lastClickTime         = useRef<number>(0);
+    const lastClickId           = useRef<string>("");
+
+    // tableRows ref — always holds current tableRows without stale closure issues
+    const tableRowsRef          = useRef<TableRow[]>([]);
+    tableRowsRef.current = tableRows;
 
     // ── Statistics ────────────────────────────────────────────────────────────
-    const updateCellStatistics = useCallback((rows: TableRow[]) => {
-        const totalCells   = rows.reduce((s, r) => s + r.cells.length, 0);
-        const blockedCells = rows.reduce((s, r) => s + r.cells.filter(c => c.isBlocked).length, 0);
-        const mergedCells  = rows.reduce((s, r) => s + r.cells.filter(c => c.isMerged && !c.isHidden).length, 0);
-        if (props.totalCellsAttribute?.status === "available")  props.totalCellsAttribute.setValue(new Big(totalCells));
-        if (props.blockedCellsAttribute?.status === "available") props.blockedCellsAttribute.setValue(new Big(blockedCells));
-        if (props.mergedCellsAttribute?.status === "available")  props.mergedCellsAttribute.setValue(new Big(mergedCells));
+    const updateStats = useCallback((rows: TableRow[]) => {
+        const total   = rows.reduce((s, r) => s + r.cells.length, 0);
+        const blocked = rows.reduce((s, r) => s + r.cells.filter(c => c.isBlocked).length, 0);
+        const merged  = rows.reduce((s, r) => s + r.cells.filter(c => c.isMerged && !c.isHidden).length, 0);
+        if (props.totalCellsAttribute?.status   === "available") props.totalCellsAttribute.setValue(new Big(total));
+        if (props.blockedCellsAttribute?.status === "available") props.blockedCellsAttribute.setValue(new Big(blocked));
+        if (props.mergedCellsAttribute?.status  === "available") props.mergedCellsAttribute.setValue(new Big(merged));
     }, [props.totalCellsAttribute, props.blockedCellsAttribute, props.mergedCellsAttribute]);
+
+    // ── Save ──────────────────────────────────────────────────────────────────
+    const saveToBackend = useCallback((rows: TableRow[], rc: number, cc: number) => {
+        const json = JSON.stringify({ rows: rc, columns: cc, tableRows: rows, metadata: { updatedAt: new Date().toISOString() } });
+        lastSavedRef.current = json;
+        setIsSaving(true);
+        if (props.useAttributeData?.status   === "available") props.useAttributeData.setValue(json);
+        if (props.tableDataAttribute?.status === "available") props.tableDataAttribute.setValue(json);
+        ignoreAttrUpdateRef.current = true;
+        if (props.rowCountAttribute?.status    === "available") props.rowCountAttribute.setValue(new Big(rc));
+        if (props.columnCountAttribute?.status === "available") props.columnCountAttribute.setValue(new Big(cc));
+        updateStats(rows);
+        if (props.onTableChange?.canExecute) props.onTableChange.execute();
+        setTimeout(() => setIsSaving(false), 200);
+    }, [props.useAttributeData, props.tableDataAttribute, props.rowCountAttribute,
+        props.columnCountAttribute, props.onTableChange, updateStats]);
 
     // ── Load from attribute ───────────────────────────────────────────────────
     useEffect(() => {
         if (isSaving) return;
-        const incomingData = props.useAttributeData?.value || "";
-        if (incomingData === lastSavedDataRef.current && lastSavedDataRef.current !== "") return;
-        if (incomingData) {
-            try {
-                const tableData: TableData = JSON.parse(incomingData);
-                if (tableData.tableRows && tableData.rows > 0 && tableData.columns > 0) {
-                    const validatedRows = tableData.tableRows.map((row, idx) => {
-                        const rowIndex = idx + 1;
-                        return {
-                            ...row, id: `row_${rowIndex}`, rowIndex,
-                            cells: row.cells.map((cell, cIdx) => {
-                                const colIndex = cIdx + 1;
-                                return {
-                                    id: `cell_${rowIndex}_${colIndex}`,
-                                    sequenceNumber: cell.sequenceNumber || "-",
-                                    isBlocked:  cell.isBlocked  || false,
-                                    isMerged:   cell.isMerged   || false,
-                                    mergeId:    cell.mergeId    || "",
-                                    isBlank:    cell.isBlank    || false,
-                                    rowIndex,
-                                    columnIndex: colIndex,
-                                    checked:    cell.checked    || false,
-                                    isSelected: false,
-                                    rowSpan:    cell.rowSpan    || 1,
-                                    colSpan:    cell.colSpan    || 1,
-                                    isHidden:   cell.isHidden   || false
-                                } as CellObject;
-                            })
-                        };
-                    });
-                    setRowCount(tableData.rows);
-                    setColumnCount(tableData.columns);
-                    ignoreAttributeUpdateRef.current = true;
-                    if (props.rowCountAttribute?.status === "available")
-                        props.rowCountAttribute.setValue(new Big(tableData.rows));
-                    if (props.columnCountAttribute?.status === "available")
-                        props.columnCountAttribute.setValue(new Big(tableData.columns));
-                    setTableRows(validatedRows);
-                    setSelectedCells(new Set());
-                    setDataLoaded(true);
-                    updateCellStatistics(validatedRows);
-                    lastSavedDataRef.current = incomingData;
-                    if (isInitialLoad) setTimeout(() => setIsInitialLoad(false), 500);
-                }
-            } catch (e) {
-                console.error("Error loading table:", e);
-                if (isInitialLoad) setTimeout(() => setIsInitialLoad(false), 500);
-            }
-        } else {
+        const raw = props.useAttributeData?.value || "";
+        if (raw === lastSavedRef.current && lastSavedRef.current !== "") return;
+        if (!raw) { if (isInitialLoad) setTimeout(() => setIsInitialLoad(false), 500); return; }
+        try {
+            const td: TableData = JSON.parse(raw);
+            if (!td.tableRows || td.rows <= 0 || td.columns <= 0) return;
+            const validated = td.tableRows.map((row, ri) => ({
+                ...row, id: `row_${ri + 1}`, rowIndex: ri + 1,
+                cells: row.cells.map((cell, ci) => ({
+                    id: `cell_${ri + 1}_${ci + 1}`,
+                    sequenceNumber: cell.sequenceNumber ?? "-",
+                    isBlocked:  cell.isBlocked  ?? false,
+                    isMerged:   cell.isMerged   ?? false,
+                    mergeId:    cell.mergeId    ?? "",
+                    isBlank:    cell.isBlank    ?? false,
+                    rowIndex:   ri + 1,
+                    columnIndex: ci + 1,
+                    checked:    cell.checked    ?? false,
+                    isSelected: false,
+                    rowSpan:    cell.rowSpan    ?? 1,
+                    colSpan:    cell.colSpan    ?? 1,
+                    isHidden:   cell.isHidden   ?? false
+                } as CellObject))
+            }));
+            setRowCount(td.rows); setColumnCount(td.columns);
+            ignoreAttrUpdateRef.current = true;
+            if (props.rowCountAttribute?.status    === "available") props.rowCountAttribute.setValue(new Big(td.rows));
+            if (props.columnCountAttribute?.status === "available") props.columnCountAttribute.setValue(new Big(td.columns));
+            setTableRows(validated);
+            setSelectedCells(new Set());
+            setDataLoaded(true);
+            updateStats(validated);
+            lastSavedRef.current = raw;
+            if (isInitialLoad) setTimeout(() => setIsInitialLoad(false), 500);
+        } catch (e) {
+            console.error("Table load error:", e);
             if (isInitialLoad) setTimeout(() => setIsInitialLoad(false), 500);
         }
-    }, [props.useAttributeData?.value, updateCellStatistics, isSaving, isInitialLoad,
+    }, [props.useAttributeData?.value, isSaving, isInitialLoad, updateStats,
         props.rowCountAttribute, props.columnCountAttribute]);
 
     useEffect(() => {
-        if (ignoreAttributeUpdateRef.current) { ignoreAttributeUpdateRef.current = false; return; }
+        if (ignoreAttrUpdateRef.current) { ignoreAttrUpdateRef.current = false; return; }
         if (props.rowCountAttribute?.status === "available" && props.rowCountAttribute.value != null) {
             const v = Number(props.rowCountAttribute.value);
             if (!isNaN(v) && v > 0 && v <= 100 && v !== rowCount && !isUserInputRef.current) setRowCount(v);
@@ -175,497 +190,333 @@ const Tableview = (props: TableviewContainerProps): ReactElement => {
     }, [props.rowCountAttribute?.value, rowCount]);
 
     useEffect(() => {
-        if (ignoreAttributeUpdateRef.current) { ignoreAttributeUpdateRef.current = false; return; }
+        if (ignoreAttrUpdateRef.current) { ignoreAttrUpdateRef.current = false; return; }
         if (props.columnCountAttribute?.status === "available" && props.columnCountAttribute.value != null) {
             const v = Number(props.columnCountAttribute.value);
             if (!isNaN(v) && v > 0 && v <= 100 && v !== columnCount && !isUserInputRef.current) setColumnCount(v);
         }
     }, [props.columnCountAttribute?.value, columnCount]);
 
-    // ── Save to backend ───────────────────────────────────────────────────────
-    const saveToBackend = useCallback((rows: TableRow[], rowCnt: number, colCnt: number) => {
-        const jsonData = JSON.stringify({
-            rows: rowCnt, columns: colCnt, tableRows: rows,
-            metadata: { updatedAt: new Date().toISOString() }
-        });
-        lastSavedDataRef.current = jsonData;
-        setIsSaving(true);
-        if (props.useAttributeData?.status === "available")   props.useAttributeData.setValue(jsonData);
-        if (props.tableDataAttribute?.status === "available") props.tableDataAttribute.setValue(jsonData);
-        ignoreAttributeUpdateRef.current = true;
-        if (props.rowCountAttribute?.status === "available")    props.rowCountAttribute.setValue(new Big(rowCnt));
-        if (props.columnCountAttribute?.status === "available") props.columnCountAttribute.setValue(new Big(colCnt));
-        updateCellStatistics(rows);
-        if (props.onTableChange?.canExecute) props.onTableChange.execute();
-        setTimeout(() => setIsSaving(false), 200);
-    }, [props.useAttributeData, props.tableDataAttribute, props.rowCountAttribute,
-        props.columnCountAttribute, props.onTableChange, updateCellStatistics]);
-
-    // ── Create new table ──────────────────────────────────────────────────────
-    const createNewTable = useCallback((rows: number, cols: number) => {
-        if (rows <= 0 || cols <= 0) return;
-        const newTableRows: TableRow[] = Array.from({ length: rows }, (_, idx) => {
-            const rowIndex = idx + 1;
-            return {
-                id: `row_${rowIndex}`, rowIndex,
-                cells: Array.from({ length: cols }, (_, cIdx) => {
-                    const colIndex = cIdx + 1;
-                    return {
-                        id: `cell_${rowIndex}_${colIndex}`,
-                        sequenceNumber: "-", isBlocked: false, isMerged: false, mergeId: "",
-                        isBlank: false, rowIndex, columnIndex: colIndex,
-                        checked: false, isSelected: false, rowSpan: 1, colSpan: 1, isHidden: false
-                    } as CellObject;
-                })
-            };
-        });
-        setTableRows(newTableRows);
-        setSelectedCells(new Set());
-        setDataLoaded(true);
-        saveToBackend(newTableRows, rows, cols);
+    // ── Create table ──────────────────────────────────────────────────────────
+    const createTable = useCallback((rc: number, cc: number) => {
+        if (rc <= 0 || cc <= 0) return;
+        const rows: TableRow[] = Array.from({ length: rc }, (_, ri) => ({
+            id: `row_${ri + 1}`, rowIndex: ri + 1,
+            cells: Array.from({ length: cc }, (_, ci) => ({
+                id: `cell_${ri + 1}_${ci + 1}`,
+                sequenceNumber: "-", isBlocked: false, isMerged: false, mergeId: "",
+                isBlank: false, rowIndex: ri + 1, columnIndex: ci + 1,
+                checked: false, isSelected: false, rowSpan: 1, colSpan: 1, isHidden: false
+            } as CellObject))
+        }));
+        setTableRows(rows); setSelectedCells(new Set()); setDataLoaded(true);
+        saveToBackend(rows, rc, cc);
     }, [saveToBackend]);
 
     useEffect(() => {
-        const t = setTimeout(() => {
-            if (!dataLoaded && tableRows.length === 0) createNewTable(rowCount, columnCount);
-        }, 100);
+        const t = setTimeout(() => { if (!dataLoaded && tableRows.length === 0) createTable(rowCount, columnCount); }, 100);
         return () => clearTimeout(t);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [dataLoaded]);
 
-    useEffect(() => {
-        if (tableRows.length > 0) updateCellStatistics(tableRows);
-    }, [tableRows, updateCellStatistics]);
+    useEffect(() => { if (tableRows.length > 0) updateStats(tableRows); }, [tableRows, updateStats]);
 
-    // ── Dimension management ──────────────────────────────────────────────────
     const applyDimensions = useCallback(() => {
-        if (isNaN(rowCount) || isNaN(columnCount) || rowCount <= 0 || columnCount <= 0) {
-            alert("Please enter valid numbers"); return;
-        }
-        if (rowCount > 100 || columnCount > 100) { alert("Maximum 100 rows and 100 columns"); return; }
-        ignoreAttributeUpdateRef.current = true;
-        if (props.rowCountAttribute?.status === "available")    props.rowCountAttribute.setValue(new Big(rowCount));
+        if (!rowCount || !columnCount || rowCount > 100 || columnCount > 100) { alert("Enter valid numbers (1-100)"); return; }
+        ignoreAttrUpdateRef.current = true;
+        if (props.rowCountAttribute?.status    === "available") props.rowCountAttribute.setValue(new Big(rowCount));
         if (props.columnCountAttribute?.status === "available") props.columnCountAttribute.setValue(new Big(columnCount));
-        createNewTable(rowCount, columnCount);
-    }, [rowCount, columnCount, createNewTable, props.rowCountAttribute, props.columnCountAttribute]);
+        createTable(rowCount, columnCount);
+    }, [rowCount, columnCount, createTable, props.rowCountAttribute, props.columnCountAttribute]);
 
     const addRow = useCallback(() => {
-        const n = rowCount + 1;
-        if (n > 100) { alert("Maximum 100 rows"); return; }
-        isUserInputRef.current = true;
-        setRowCount(n);
-        ignoreAttributeUpdateRef.current = true;
+        const n = rowCount + 1; if (n > 100) { alert("Max 100 rows"); return; }
+        isUserInputRef.current = true; setRowCount(n);
+        ignoreAttrUpdateRef.current = true;
         if (props.rowCountAttribute?.status === "available") props.rowCountAttribute.setValue(new Big(n));
         setTableRows(prev => {
-            const rows = [...prev];
-            rows.push({
-                id: `row_${n}`, rowIndex: n,
-                cells: Array.from({ length: columnCount }, (_, cIdx) => ({
-                    id: `cell_${n}_${cIdx + 1}`, sequenceNumber: "-", isBlocked: false,
-                    isMerged: false, mergeId: "", isBlank: false, rowIndex: n,
-                    columnIndex: cIdx + 1, checked: false, isSelected: false,
-                    rowSpan: 1, colSpan: 1, isHidden: false
+            const rows = [...prev, { id: `row_${n}`, rowIndex: n,
+                cells: Array.from({ length: columnCount }, (_, ci) => ({
+                    id: `cell_${n}_${ci + 1}`, sequenceNumber: "-", isBlocked: false, isMerged: false,
+                    mergeId: "", isBlank: false, rowIndex: n, columnIndex: ci + 1,
+                    checked: false, isSelected: false, rowSpan: 1, colSpan: 1, isHidden: false
                 } as CellObject))
-            });
-            saveToBackend(rows, n, columnCount);
-            return rows;
+            }];
+            saveToBackend(rows, n, columnCount); return rows;
         });
         setTimeout(() => { isUserInputRef.current = false; }, 100);
     }, [rowCount, columnCount, props.rowCountAttribute, saveToBackend]);
 
     const addColumn = useCallback(() => {
-        const n = columnCount + 1;
-        if (n > 100) { alert("Maximum 100 columns"); return; }
-        isUserInputRef.current = true;
-        setColumnCount(n);
-        ignoreAttributeUpdateRef.current = true;
+        const n = columnCount + 1; if (n > 100) { alert("Max 100 columns"); return; }
+        isUserInputRef.current = true; setColumnCount(n);
+        ignoreAttrUpdateRef.current = true;
         if (props.columnCountAttribute?.status === "available") props.columnCountAttribute.setValue(new Big(n));
         setTableRows(prev => {
-            const rows = prev.map(row => ({
-                ...row,
-                cells: [...row.cells, {
-                    id: `cell_${row.rowIndex}_${n}`, sequenceNumber: "-", isBlocked: false,
-                    isMerged: false, mergeId: "", isBlank: false, rowIndex: row.rowIndex,
-                    columnIndex: n, checked: false, isSelected: false,
-                    rowSpan: 1, colSpan: 1, isHidden: false
-                } as CellObject]
-            }));
-            saveToBackend(rows, rowCount, n);
-            return rows;
+            const rows = prev.map(row => ({ ...row, cells: [...row.cells, {
+                id: `cell_${row.rowIndex}_${n}`, sequenceNumber: "-", isBlocked: false, isMerged: false,
+                mergeId: "", isBlank: false, rowIndex: row.rowIndex, columnIndex: n,
+                checked: false, isSelected: false, rowSpan: 1, colSpan: 1, isHidden: false
+            } as CellObject]}));
+            saveToBackend(rows, rowCount, n); return rows;
         });
         setTimeout(() => { isUserInputRef.current = false; }, 100);
     }, [rowCount, columnCount, props.columnCountAttribute, saveToBackend]);
 
     // ── Cell value change ─────────────────────────────────────────────────────
-    const handleCellValueChange = useCallback((rowIndex: number, colIndex: number, newValue: string) => {
+    const handleCellValueChange = useCallback((rowIndex: number, colIndex: number, value: string) => {
         setTableRows(prev => {
             const rows = prev.map(r => ({ ...r, cells: r.cells.map(c => ({ ...c })) }));
             const cell = rows.find(r => r.rowIndex === rowIndex)?.cells.find(c => c.columnIndex === colIndex);
             if (!cell) return prev;
-            cell.sequenceNumber = newValue;
+            cell.sequenceNumber = value;
             if (cell.mergeId) {
                 const mid = cell.mergeId;
-                rows.forEach(r => r.cells.forEach(c => { if (c.mergeId === mid) c.sequenceNumber = newValue; }));
+                rows.forEach(r => r.cells.forEach(c => { if (c.mergeId === mid) c.sequenceNumber = value; }));
             }
-            updateCellStatistics(rows);
-            latestTableStateRef.current = { rows, rowCount, columnCount };
+            updateStats(rows);
+            latestStateRef.current = { rows, rc: rowCount, cc: columnCount };
             if (props.autoSave) {
-                if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-                saveTimeoutRef.current = setTimeout(() => {
-                    if (latestTableStateRef.current) {
-                        saveToBackend(latestTableStateRef.current.rows,
-                            latestTableStateRef.current.rowCount,
-                            latestTableStateRef.current.columnCount);
-                    }
+                if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+                saveTimerRef.current = setTimeout(() => {
+                    if (latestStateRef.current) saveToBackend(latestStateRef.current.rows, latestStateRef.current.rc, latestStateRef.current.cc);
                 }, 300);
             }
             return rows;
         });
         if (props.onCellClick?.canExecute) props.onCellClick.execute();
-    }, [props.onCellClick, props.autoSave, updateCellStatistics, saveToBackend, rowCount, columnCount]);
+    }, [updateStats, props.autoSave, props.onCellClick, saveToBackend, rowCount, columnCount]);
 
-    // ── Checkbox change ───────────────────────────────────────────────────────
+    // ── Checkbox ──────────────────────────────────────────────────────────────
     const handleCheckboxChange = useCallback((rowIndex: number, colIndex: number) => {
         setTableRows(prev => {
             const rows = prev.map(r => ({ ...r, cells: r.cells.map(c => ({ ...c })) }));
             const cell = rows.find(r => r.rowIndex === rowIndex)?.cells.find(c => c.columnIndex === colIndex);
             if (!cell) return prev;
-            const checked = !cell.checked;
-            cell.checked = checked; cell.isBlocked = checked;
+            const chk = !cell.checked;
+            cell.checked = chk; cell.isBlocked = chk;
             if (cell.mergeId) {
                 const mid = cell.mergeId;
-                rows.forEach(r => r.cells.forEach(c => {
-                    if (c.mergeId === mid) { c.checked = checked; c.isBlocked = checked; }
-                }));
+                rows.forEach(r => r.cells.forEach(c => { if (c.mergeId === mid) { c.checked = chk; c.isBlocked = chk; } }));
             }
-            updateCellStatistics(rows);
+            updateStats(rows);
             if (props.autoSave) saveToBackend(rows, rowCount, columnCount);
             return rows;
         });
         if (props.onCellClick?.canExecute) props.onCellClick.execute();
-    }, [props.onCellClick, props.autoSave, updateCellStatistics, saveToBackend, rowCount, columnCount]);
+    }, [updateStats, props.autoSave, props.onCellClick, saveToBackend, rowCount, columnCount]);
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // POINTER-EVENT BASED DRAG SELECTION
-    // Attached directly to the table wrapper div via useEffect so it works
-    // identically regardless of what child element (input, checkbox, td) is
-    // under the pointer — including after editing cell values.
+    // ────────────────────────────────────────────────────────────────────────────
+    // DRAG-SELECT SYSTEM
     //
-    // Strategy:
-    //   pointerdown  → record start cell, call setPointerCapture so all future
-    //                  pointer events come here even if mouse leaves the element
-    //   pointermove  → update rectangular selection using elementFromPoint
-    //   pointerup    → finalize; if mouse never moved it was a click → toggle
+    // Uses document-level mousemove/mouseup (NOT pointer capture).
+    // mousedown on td/input → record drag start.
+    // mousemove on document → elementFromPoint to find current cell → update rect.
+    // mouseup on document   → if no movement = click/dblclick; if moved = drag end.
     //
-    // We use native DOM events (not React synthetic) so we can call
-    // setPointerCapture, which React doesn't expose cleanly.
-    // ─────────────────────────────────────────────────────────────────────────
+    // Key: tableRowsRef always holds latest tableRows so handlers never go stale.
+    // ────────────────────────────────────────────────────────────────────────────
     useEffect(() => {
-        const wrapper = tableWrapperRef.current;
-        if (!wrapper) return;
-
-        const getCellFromPoint = (x: number, y: number): { row: number; col: number; id: string } | null => {
-            // Temporarily release pointer capture for elementFromPoint to work
-            const el = document.elementFromPoint(x, y);
-            const td = findCellTd(el);
-            if (!td || !td.dataset.cellid) return null;
+        const onDocMouseMove = (e: MouseEvent) => {
+            if (!dragging.current || !dragStart.current) return;
+            const td = getTdCell(document.elementFromPoint(e.clientX, e.clientY));
+            if (!td?.dataset.cellid) return;
             const pos = parseCellId(td.dataset.cellid);
-            if (!pos) return null;
-            return { ...pos, id: td.dataset.cellid };
+            if (!pos) return;
+            const s = dragStart.current;
+            if (pos.row !== s.row || pos.col !== s.col) dragMoved.current = true;
+            setSelectedCells(rectSet(s.row, s.col, pos.row, pos.col));
         };
 
-        const onPointerDown = (e: PointerEvent) => {
-            // Ignore right-click / middle-click
-            if (e.button !== 0) return;
-
-            // If the click target is a checkbox — let it do its own thing
-            const target = e.target as HTMLElement;
-            if (target.tagName === "INPUT" && (target as HTMLInputElement).type === "checkbox") return;
-
-            const cell = getCellFromPoint(e.clientX, e.clientY);
-            if (!cell) return;
-
-            // Capture pointer so move/up fire here even if mouse leaves wrapper
-            try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
-
-            isDraggingRef.current  = true;
-            dragStartRef.current   = { row: cell.row, col: cell.col };
-            dragHasMovedRef.current = false;
-
-            // Don't prevent default for text inputs so they keep focus + caret
-            if (!(target.tagName === "INPUT" && (target as HTMLInputElement).type === "text")) {
-                e.preventDefault();
-            }
-
-            setIsDragging(true);
-            // Start with just the clicked cell selected
-            setSelectedCells(new Set([cell.id]));
-        };
-
-        const onPointerMove = (e: PointerEvent) => {
-            if (!isDraggingRef.current || !dragStartRef.current) return;
-
-            // When pointer is captured, elementFromPoint still returns the correct element
-            // We need to release capture temporarily — instead use the captured coordinates
-            // with a temporary releasePointerCapture trick, OR just compute from target chain.
-            // The cleanest approach: use document.elementFromPoint directly.
-            // With setPointerCapture, e.target is the capturing element but x/y are still correct.
-            const cell = getCellFromPoint(e.clientX, e.clientY);
-            if (!cell) return;
-
-            const start = dragStartRef.current;
-            if (cell.row !== start.row || cell.col !== start.col) {
-                dragHasMovedRef.current = true;
-            }
-
-            setSelectedCells(buildRectSet(start.row, start.col, cell.row, cell.col));
-        };
-
-        const onPointerUp = (e: PointerEvent) => {
-            if (!isDraggingRef.current) return;
-
-            try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch (_) { /* ignore */ }
-
-            const hasMoved    = dragHasMovedRef.current;
-            const start       = dragStartRef.current;
-
-            isDraggingRef.current  = false;
-            dragStartRef.current   = null;
-            dragHasMovedRef.current = false;
+        const onDocMouseUp = () => {
+            if (!dragging.current) return;
+            const moved = dragMoved.current;
+            const start = dragStart.current;
+            dragging.current  = false;
+            dragStart.current = null;
+            dragMoved.current = false;
             setIsDragging(false);
 
-            if (!hasMoved && start) {
-                // It was a click (no drag movement) — handle single/double click
-                const now      = Date.now();
-                const cellId   = `cell_${start.row}_${start.col}`;
-                const lastTime = lastClickTimeRef.current;
-                const lastCell = lastClickCellRef.current;
-                const isDouble = (now - lastTime) < 350 && lastCell === cellId;
+            if (!moved && start) {
+                // Single or double click
+                const cellId  = `cell_${start.row}_${start.col}`;
+                const now     = Date.now();
+                const isDbl   = (now - lastClickTime.current) < 350 && lastClickId.current === cellId;
+                lastClickTime.current = now;
+                lastClickId.current   = cellId;
 
-                lastClickTimeRef.current = now;
-                lastClickCellRef.current = cellId;
+                if (isDbl) {
+                    // Double-click → select whole merge group (or toggle single cell)
+                    const currentRows = tableRowsRef.current;
+                    const clickedCell = currentRows
+                        .find(r => r.rowIndex === start.row)
+                        ?.cells.find(c => c.columnIndex === start.col);
 
-                if (isDouble) {
-                    // Double click → select/deselect the entire merge group (or single cell)
-                    handleDoubleClickSelect(start.row, start.col);
-                } else {
-                    // Single click → toggle this cell in the selection
                     setSelectedCells(prev => {
                         const next = new Set(prev);
-                        if (next.has(cellId)) {
-                            next.delete(cellId);
+                        if (clickedCell?.isMerged && clickedCell.mergeId) {
+                            const ids = new Set<string>();
+                            currentRows.forEach(r => r.cells.forEach(c => {
+                                if (c.mergeId === clickedCell.mergeId) ids.add(c.id);
+                            }));
+                            const anySelected = Array.from(ids).some(id => next.has(id));
+                            ids.forEach(id => anySelected ? next.delete(id) : next.add(id));
                         } else {
-                            next.add(cellId);
+                            next.has(cellId) ? next.delete(cellId) : next.add(cellId);
                         }
                         return next;
                     });
                 }
-
-                if (props.onCellClick?.canExecute) props.onCellClick.execute();
+                // single click: selection was already set on mousedown (one cell)
             }
         };
 
-        const onPointerCancel = () => {
-            isDraggingRef.current   = false;
-            dragStartRef.current    = null;
-            dragHasMovedRef.current = false;
-            setIsDragging(false);
-        };
-
-        wrapper.addEventListener("pointerdown",   onPointerDown);
-        wrapper.addEventListener("pointermove",   onPointerMove);
-        wrapper.addEventListener("pointerup",     onPointerUp);
-        wrapper.addEventListener("pointercancel", onPointerCancel);
-
+        document.addEventListener("mousemove", onDocMouseMove);
+        document.addEventListener("mouseup",   onDocMouseUp);
         return () => {
-            wrapper.removeEventListener("pointerdown",   onPointerDown);
-            wrapper.removeEventListener("pointermove",   onPointerMove);
-            wrapper.removeEventListener("pointerup",     onPointerUp);
-            wrapper.removeEventListener("pointercancel", onPointerCancel);
+            document.removeEventListener("mousemove", onDocMouseMove);
+            document.removeEventListener("mouseup",   onDocMouseUp);
         };
-        // tableRows is needed for handleDoubleClickSelect closure — but we
-        // re-attach when tableRows changes via the dependency below
-    }, [tableRows, props.onCellClick]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, []); // empty deps — uses only refs, never goes stale
 
-    // ── Double-click: select/deselect whole merge group ───────────────────────
-    // Called from inside the pointer event handler above (closure over tableRows)
-    const handleDoubleClickSelect = useCallback((rowIndex: number, colIndex: number) => {
-        const cellId    = `cell_${rowIndex}_${colIndex}`;
-        const clickedCell = tableRows
-            .find(r => r.rowIndex === rowIndex)
-            ?.cells.find(c => c.columnIndex === colIndex);
+    // Called from td onMouseDown
+    const handleCellMouseDown = useCallback((rowIndex: number, colIndex: number, e: React.MouseEvent) => {
+        // Checkboxes handle themselves — don't start drag
+        if ((e.target as HTMLElement).tagName === "INPUT" && (e.target as HTMLInputElement).type === "checkbox") return;
 
-        setSelectedCells(prev => {
-            const next = new Set(prev);
+        // For text inputs: do NOT preventDefault so the input keeps focus + caret.
+        // For everything else: preventDefault stops browser text-selection during drag.
+        if ((e.target as HTMLElement).tagName !== "INPUT") e.preventDefault();
 
-            if (clickedCell?.isMerged && clickedCell.mergeId) {
-                // Collect all cell ids in this merge group
-                const groupIds = new Set<string>();
-                tableRows.forEach(r => r.cells.forEach(c => {
-                    if (c.mergeId === clickedCell.mergeId) groupIds.add(c.id);
-                }));
-                const anySelected = Array.from(groupIds).some(id => next.has(id));
-                groupIds.forEach(id => anySelected ? next.delete(id) : next.add(id));
-            } else {
-                // Single cell toggle
-                next.has(cellId) ? next.delete(cellId) : next.add(cellId);
-            }
-            return next;
-        });
-    }, [tableRows]);
+        dragging.current  = true;
+        dragStart.current = { row: rowIndex, col: colIndex };
+        dragMoved.current = false;
+        setIsDragging(true);
+        // Immediately show the start cell as selected
+        setSelectedCells(new Set([`cell_${rowIndex}_${colIndex}`]));
+    }, []);
 
-    // ── Cleanup on unmount ────────────────────────────────────────────────────
-    useEffect(() => {
-        return () => {
-            if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-            if (latestTableStateRef.current && props.autoSave) {
-                const { rows, rowCount: rc, columnCount: cc } = latestTableStateRef.current;
-                const json = JSON.stringify({ rows: rc, columns: cc, tableRows: rows, metadata: { updatedAt: new Date().toISOString() } });
-                if (props.useAttributeData?.status === "available")   props.useAttributeData.setValue(json);
-                if (props.tableDataAttribute?.status === "available") props.tableDataAttribute.setValue(json);
-            }
-        };
-    }, [props.autoSave, props.useAttributeData, props.tableDataAttribute]);
-
-    // ── Merge / Unmerge / Blank / Unblank ────────────────────────────────────
-    const createMergeId = (r1: number, c1: number, r2: number, c2: number) => `${r1}_${c1}_${r2}_${c2}`;
-
-    const selectAllCells = useCallback(() => {
+    // ── Merge ─────────────────────────────────────────────────────────────────
+    const selectAll = useCallback(() => {
         const all = new Set<string>();
-        tableRows.forEach(row => row.cells.forEach(c => { if (!c.isHidden) all.add(c.id); }));
+        tableRows.forEach(r => r.cells.forEach(c => { if (!c.isHidden) all.add(c.id); }));
         setSelectedCells(all);
     }, [tableRows]);
 
     const mergeCells = useCallback(() => {
         if (selectedCells.size < 2) return;
-        const positions = Array.from(selectedCells).map(id => {
-            const p = parseCellId(id);
-            return p!;
-        }).filter(Boolean);
-        const minRow = Math.min(...positions.map(p => p.row));
-        const maxRow = Math.max(...positions.map(p => p.row));
-        const minCol = Math.min(...positions.map(p => p.col));
-        const maxCol = Math.max(...positions.map(p => p.col));
-        if (selectedCells.size !== (maxRow - minRow + 1) * (maxCol - minCol + 1)) {
+        const pos = Array.from(selectedCells).map(id => parseCellId(id)).filter(Boolean) as { row: number; col: number }[];
+        const minR = Math.min(...pos.map(p => p.row)), maxR = Math.max(...pos.map(p => p.row));
+        const minC = Math.min(...pos.map(p => p.col)), maxC = Math.max(...pos.map(p => p.col));
+        if (selectedCells.size !== (maxR - minR + 1) * (maxC - minC + 1)) {
             alert("Please select a rectangular area to merge"); return;
         }
-
         setTableRows(prev => {
             const rows = prev.map(r => ({ ...r, cells: r.cells.map(c => ({ ...c })) }));
-            // Unmerge existing merges in area first
-            for (let r = minRow; r <= maxRow; r++) {
-                for (let c = minCol; c <= maxCol; c++) {
-                    const cell = rows.find(row => row.rowIndex === r)?.cells.find(cl => cl.columnIndex === c);
-                    if (cell?.isMerged && cell.mergeId) {
-                        const oid = cell.mergeId;
-                        rows.forEach(row => row.cells.forEach(cl => {
-                            if (cl.mergeId === oid) {
-                                cl.isMerged = false; cl.rowSpan = 1; cl.colSpan = 1;
-                                cl.isHidden = false; cl.mergeId = "";
-                            }
-                        }));
-                    }
+            // Unmerge any existing merges in the selection area first
+            for (let r = minR; r <= maxR; r++) for (let c = minC; c <= maxC; c++) {
+                const cell = rows.find(row => row.rowIndex === r)?.cells.find(cl => cl.columnIndex === c);
+                if (cell?.isMerged && cell.mergeId) {
+                    const old = cell.mergeId;
+                    rows.forEach(row => row.cells.forEach(cl => {
+                        if (cl.mergeId === old) { cl.isMerged = false; cl.rowSpan = 1; cl.colSpan = 1; cl.isHidden = false; cl.mergeId = ""; }
+                    }));
                 }
             }
-            const mergeId   = createMergeId(minRow, minCol, maxRow, maxCol);
-            const topLeft   = rows.find(r => r.rowIndex === minRow)?.cells.find(c => c.columnIndex === minCol);
-            if (!topLeft) return prev;
-            const val = topLeft.sequenceNumber, chk = topLeft.checked, blk = topLeft.isBlocked;
-            for (let r = minRow; r <= maxRow; r++) {
-                for (let c = minCol; c <= maxCol; c++) {
-                    const cell = rows.find(row => row.rowIndex === r)?.cells.find(cl => cl.columnIndex === c);
-                    if (!cell) continue;
-                    cell.sequenceNumber = val; cell.checked = chk; cell.isBlocked = blk;
-                    cell.isMerged = true; cell.mergeId = mergeId;
-                    if (r === minRow && c === minCol) {
-                        cell.rowSpan = maxRow - minRow + 1; cell.colSpan = maxCol - minCol + 1; cell.isHidden = false;
-                    } else {
-                        cell.rowSpan = 1; cell.colSpan = 1; cell.isHidden = true;
-                    }
-                }
+            const mid = `m_${minR}_${minC}_${maxR}_${maxC}`;
+            const tl  = rows.find(r => r.rowIndex === minR)?.cells.find(c => c.columnIndex === minC);
+            if (!tl) return prev;
+            const val = tl.sequenceNumber, chk = tl.checked, blk = tl.isBlocked;
+            for (let r = minR; r <= maxR; r++) for (let c = minC; c <= maxC; c++) {
+                const cell = rows.find(row => row.rowIndex === r)?.cells.find(cl => cl.columnIndex === c);
+                if (!cell) continue;
+                cell.sequenceNumber = val; cell.checked = chk; cell.isBlocked = blk;
+                cell.isMerged = true; cell.mergeId = mid;
+                if (r === minR && c === minC) { cell.rowSpan = maxR - minR + 1; cell.colSpan = maxC - minC + 1; cell.isHidden = false; }
+                else { cell.rowSpan = 1; cell.colSpan = 1; cell.isHidden = true; }
             }
-            updateCellStatistics(rows);
-            saveToBackend(rows, rowCount, columnCount);
+            updateStats(rows); saveToBackend(rows, rowCount, columnCount);
             return rows;
         });
-        setSelectedCells(new Set([`cell_${minRow}_${minCol}`]));
-    }, [selectedCells, updateCellStatistics, saveToBackend, rowCount, columnCount]);
+        setSelectedCells(new Set([`cell_${minR}_${minC}`]));
+    }, [selectedCells, updateStats, saveToBackend, rowCount, columnCount]);
 
     const unmergeCells = useCallback(() => {
         if (selectedCells.size === 0) return;
         setTableRows(prev => {
             const rows = prev.map(r => ({ ...r, cells: r.cells.map(c => ({ ...c })) }));
-            const mergeIds = new Set<string>();
+            const mids = new Set<string>();
             Array.from(selectedCells).forEach(id => {
-                const p = parseCellId(id);
-                if (!p) return;
+                const p = parseCellId(id); if (!p) return;
                 const cell = rows.find(r => r.rowIndex === p.row)?.cells.find(c => c.columnIndex === p.col);
-                if (cell?.isMerged && cell.mergeId) mergeIds.add(cell.mergeId);
+                if (cell?.isMerged && cell.mergeId) mids.add(cell.mergeId);
             });
-            if (mergeIds.size === 0) return prev;
-            mergeIds.forEach(mid => {
-                rows.forEach(r => r.cells.forEach(c => {
-                    if (c.mergeId === mid) {
-                        c.isMerged = false; c.rowSpan = 1; c.colSpan = 1; c.isHidden = false; c.mergeId = "";
-                    }
-                }));
-            });
-            updateCellStatistics(rows);
-            saveToBackend(rows, rowCount, columnCount);
+            if (mids.size === 0) return prev;
+            mids.forEach(mid => rows.forEach(r => r.cells.forEach(c => {
+                if (c.mergeId === mid) { c.isMerged = false; c.rowSpan = 1; c.colSpan = 1; c.isHidden = false; c.mergeId = ""; }
+            })));
+            updateStats(rows); saveToBackend(rows, rowCount, columnCount);
             return rows;
         });
-    }, [selectedCells, updateCellStatistics, saveToBackend, rowCount, columnCount]);
+    }, [selectedCells, updateStats, saveToBackend, rowCount, columnCount]);
 
     const blankCells = useCallback(() => {
         if (selectedCells.size === 0) return;
         setTableRows(prev => {
             const rows = prev.map(r => ({ ...r, cells: r.cells.map(c => ({ ...c })) }));
             Array.from(selectedCells).forEach(id => {
-                const p = parseCellId(id);
-                if (!p) return;
+                const p = parseCellId(id); if (!p) return;
                 const cell = rows.find(r => r.rowIndex === p.row)?.cells.find(c => c.columnIndex === p.col);
                 if (!cell) return;
                 cell.isBlank = true;
                 if (cell.mergeId) rows.forEach(r => r.cells.forEach(c => { if (c.mergeId === cell.mergeId) c.isBlank = true; }));
             });
-            updateCellStatistics(rows);
-            saveToBackend(rows, rowCount, columnCount);
+            updateStats(rows); saveToBackend(rows, rowCount, columnCount);
             return rows;
         });
         setSelectedCells(new Set());
-    }, [selectedCells, updateCellStatistics, saveToBackend, rowCount, columnCount]);
+    }, [selectedCells, updateStats, saveToBackend, rowCount, columnCount]);
 
     const unblankCells = useCallback(() => {
         if (selectedCells.size === 0) return;
         setTableRows(prev => {
             const rows = prev.map(r => ({ ...r, cells: r.cells.map(c => ({ ...c })) }));
             Array.from(selectedCells).forEach(id => {
-                const p = parseCellId(id);
-                if (!p) return;
+                const p = parseCellId(id); if (!p) return;
                 const cell = rows.find(r => r.rowIndex === p.row)?.cells.find(c => c.columnIndex === p.col);
                 if (!cell) return;
                 cell.isBlank = false;
                 if (cell.mergeId) rows.forEach(r => r.cells.forEach(c => { if (c.mergeId === cell.mergeId) c.isBlank = false; }));
             });
-            updateCellStatistics(rows);
-            saveToBackend(rows, rowCount, columnCount);
+            updateStats(rows); saveToBackend(rows, rowCount, columnCount);
             return rows;
         });
         setSelectedCells(new Set());
-    }, [selectedCells, updateCellStatistics, saveToBackend, rowCount, columnCount]);
+    }, [selectedCells, updateStats, saveToBackend, rowCount, columnCount]);
+
+    // ── Unmount cleanup ───────────────────────────────────────────────────────
+    useEffect(() => () => {
+        if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+        if (latestStateRef.current && props.autoSave) {
+            const { rows, rc, cc } = latestStateRef.current;
+            const json = JSON.stringify({ rows: rc, columns: cc, tableRows: rows, metadata: { updatedAt: new Date().toISOString() } });
+            if (props.useAttributeData?.status   === "available") props.useAttributeData.setValue(json);
+            if (props.tableDataAttribute?.status === "available") props.tableDataAttribute.setValue(json);
+        }
+    }, [props.autoSave, props.useAttributeData, props.tableDataAttribute]);
 
     // ── Styles ────────────────────────────────────────────────────────────────
-    const tableStyle        = { borderColor: props.tableBorderColor   || "#dee2e6" };
-    const selectedCellStyle = { backgroundColor: props.selectedCellColor || "#cfe2ff" };
-    const mergedCellStyle   = { backgroundColor: props.mergedCellColor  || "#e3f2fd", borderColor: "#2196f3" };
-    const blockedCellStyle  = { backgroundColor: "white", borderColor: "#fdd835" };
-    const blankCellStyle    = { backgroundColor: "transparent", border: "none", borderColor: "transparent" };
+    const tblStyle      = { borderColor: props.tableBorderColor   || "#dee2e6" };
+    const selStyle      = { backgroundColor: props.selectedCellColor || "#cfe2ff" };
+    const mergeStyle    = { backgroundColor: props.mergedCellColor  || "#e3f2fd", borderColor: "#2196f3" };
+    const blockedStyle  = { backgroundColor: "white", borderColor: "#fdd835" };
+    const blankStyle    = { backgroundColor: "transparent", border: "none", borderColor: "transparent" };
 
     // ── Render ────────────────────────────────────────────────────────────────
     return (
         <div className={classNames("tableview-container", props.class)} style={props.style}>
 
-            {/* Controls bar */}
+            {/* Controls bar — visible only when needed */}
             {(props.showGenerateButton || (props.enableCellMerging && selectedCells.size > 0)) && (
                 <div className="tableview-controls">
                     {props.showGenerateButton && (
@@ -676,13 +527,14 @@ const Tableview = (props: TableviewContainerProps): ReactElement => {
                     {props.enableCellMerging && selectedCells.size > 0 && (
                         createElement("div", { style: { display: "contents" } },
                             createElement("div",    { className: "tableview-controls-divider" }),
-                            createElement("p",      { className: "tableview-selection-info" }, `${selectedCells.size} cell(s) selected`),
-                            createElement("button", { className: "tableview-btn tableview-btn-info",      onClick: selectAllCells, title: "Select all cells" }, "Select All"),
-                            createElement("button", { className: "tableview-btn tableview-btn-warning",   onClick: mergeCells,     disabled: selectedCells.size < 2 }, "Merge Selected"),
-                            createElement("button", { className: "tableview-btn tableview-btn-danger",    onClick: unmergeCells }, "Unmerge"),
-                            props.enableBlankCells && createElement("button", { className: "tableview-btn tableview-btn-dark",    onClick: blankCells,   title: "Blank selected cells" }, "Blank"),
-                            props.enableBlankCells && createElement("button", { className: "tableview-btn tableview-btn-success", onClick: unblankCells, title: "Unblank selected cells" }, "Unblank"),
-                            createElement("button", { className: "tableview-btn tableview-btn-secondary", onClick: () => setSelectedCells(new Set()) }, "Clear Selection")
+                            createElement("p",      { className: "tableview-selection-info" },
+                                `${selectedCells.size} cell(s) selected  •  click=toggle  •  drag=multi-select  •  dbl-click=group`),
+                            createElement("button", { className: "tableview-btn tableview-btn-info",      onClick: selectAll },         "Select All"),
+                            createElement("button", { className: "tableview-btn tableview-btn-warning",   onClick: mergeCells, disabled: selectedCells.size < 2 }, "Merge"),
+                            createElement("button", { className: "tableview-btn tableview-btn-danger",    onClick: unmergeCells },       "Unmerge"),
+                            props.enableBlankCells && createElement("button", { className: "tableview-btn tableview-btn-dark",    onClick: blankCells },   "Blank"),
+                            props.enableBlankCells && createElement("button", { className: "tableview-btn tableview-btn-success", onClick: unblankCells }, "Unblank"),
+                            createElement("button", { className: "tableview-btn tableview-btn-secondary", onClick: () => setSelectedCells(new Set()) }, "Clear")
                         )
                     )}
                 </div>
@@ -702,37 +554,22 @@ const Tableview = (props: TableviewContainerProps): ReactElement => {
                         </div>
                     )}
 
-                    {/*
-                     * tableWrapperRef: all pointer events are handled here via
-                     * native addEventListener in the useEffect above.
-                     * touch-action: none prevents browser scroll from fighting our drag.
-                     * user-select: none during drag prevents text highlights.
-                     */}
                     <div
-                        ref={tableWrapperRef}
                         className="tableview-table-wrapper"
-                        style={{
-                            touchAction: isDragging ? "none" : "auto",
-                            userSelect:  isDragging ? "none" : "auto"
-                        }}
+                        style={{ userSelect: isDragging ? "none" : "auto" }}
                     >
-                        <table
-                            className="tableview-table"
-                            style={tableStyle}
-                            data-rows={rowCount}
-                            data-cols={columnCount}
-                        >
+                        <table className="tableview-table" style={tblStyle} data-rows={rowCount} data-cols={columnCount}>
                             <tbody>
                                 {tableRows.map(row => (
                                     <tr key={row.id}>
                                         {row.cells.map(cell => {
                                             if (cell.isHidden) return null;
 
-                                            let isSelected = selectedCells.has(cell.id);
-                                            if (!isSelected && cell.isMerged && cell.mergeId) {
+                                            // A merged cell is "selected" if any cell in its group is selected
+                                            let isSel = selectedCells.has(cell.id);
+                                            if (!isSel && cell.isMerged && cell.mergeId) {
                                                 tableRows.forEach(r => r.cells.forEach(c => {
-                                                    if (c.mergeId === cell.mergeId && selectedCells.has(c.id))
-                                                        isSelected = true;
+                                                    if (c.mergeId === cell.mergeId && selectedCells.has(c.id)) isSel = true;
                                                 }));
                                             }
 
@@ -744,38 +581,44 @@ const Tableview = (props: TableviewContainerProps): ReactElement => {
                                                     colSpan={cell.colSpan}
                                                     className={classNames("tableview-cell", {
                                                         "tableview-cell-merged":   cell.isMerged,
-                                                        "tableview-cell-selected": isSelected,
+                                                        "tableview-cell-selected": isSel,
                                                         "tableview-cell-blocked":  cell.isBlocked && !cell.isBlank,
                                                         "tableview-cell-dragging": isDragging,
                                                         "tableview-cell-blank":    cell.isBlank
                                                     })}
+                                                    onMouseDown={e => handleCellMouseDown(cell.rowIndex, cell.columnIndex, e)}
                                                     style={{
-                                                        ...(cell.isBlank              ? blankCellStyle    : {}),
-                                                        ...(cell.isMerged && !cell.isBlank ? mergedCellStyle : {}),
-                                                        ...(isSelected                ? selectedCellStyle : {}),
-                                                        ...(cell.isBlocked && !cell.isBlank ? blockedCellStyle : {})
+                                                        ...(cell.isBlank                    ? blankStyle   : {}),
+                                                        ...(cell.isMerged && !cell.isBlank  ? mergeStyle   : {}),
+                                                        ...(isSel                           ? selStyle     : {}),
+                                                        ...(cell.isBlocked && !cell.isBlank ? blockedStyle : {})
                                                     }}
                                                 >
                                                     <div
                                                         className="tableview-cell-content"
                                                         style={{ visibility: cell.isBlank ? "hidden" : "visible" }}
                                                     >
-                                                        {/* Checkbox — stopPropagation so pointer events
-                                                            don't reach the wrapper and start a drag */}
+                                                        {/* Checkbox:
+                                                            onMouseDown stops propagation so it never triggers
+                                                            the td's drag handler */}
                                                         <input
                                                             type="checkbox"
                                                             className="tableview-checkbox"
                                                             checked={cell.checked}
                                                             disabled={!props.enableCheckbox}
                                                             onChange={() => handleCheckboxChange(cell.rowIndex, cell.columnIndex)}
-                                                            onPointerDown={e => e.stopPropagation()}
+                                                            onMouseDown={e => e.stopPropagation()}
                                                         />
 
-                                                        {/* Text input — onChange updates value.
-                                                            NO stopPropagation on pointerDown so the
-                                                            wrapper's pointerdown handler can start drag.
-                                                            The wrapper skips preventDefault for inputs
-                                                            so the input still gets focus + caret normally. */}
+                                                        {/* Text input:
+                                                            - onChange updates the cell value normally.
+                                                            - onMouseDown does NOT stopPropagation, so the event
+                                                              bubbles to the <td> and starts the drag.
+                                                            - We do NOT call preventDefault in the td handler
+                                                              when target is an input, so the input gets focus
+                                                              and the caret is placed correctly.
+                                                            - This means typing, drag-to-select text inside the
+                                                              input, AND drag-to-select cells all work together. */}
                                                         <input
                                                             type="text"
                                                             className="tableview-cell-input"
@@ -798,7 +641,7 @@ const Tableview = (props: TableviewContainerProps): ReactElement => {
 
             {/* Info bar */}
             <div className="tableview-info">
-                <p><strong>Table:</strong> {rowCount} rows × {columnCount} columns = {rowCount * columnCount} cells</p>
+                <p><strong>Table:</strong>   {rowCount} × {columnCount} = {rowCount * columnCount} cells</p>
                 <p><strong>Blocked:</strong>  {tableRows.reduce((s, r) => s + r.cells.filter(c => c.isBlocked).length, 0)}</p>
                 <p><strong>Merged:</strong>   {tableRows.reduce((s, r) => s + r.cells.filter(c => c.isMerged && !c.isHidden).length, 0)}</p>
                 <p><strong>Blank:</strong>    {tableRows.reduce((s, r) => s + r.cells.filter(c => c.isBlank).length, 0)}</p>
